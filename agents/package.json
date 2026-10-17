@@ -1,0 +1,22 @@
+{
+  "name": "assistant-agents",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=../.env dist/server.js",
+    "dev": "node --env-file-if-exists=../.env --import tsx --watch src/server.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.71",
+    "ai": "^7.0.143",
+    "http-proxy-middleware": "^4.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "~6.0.2"
+  }
+}
