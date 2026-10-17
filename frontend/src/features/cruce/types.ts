@@ -90,6 +90,7 @@ export interface ProjectDocument {
   parent: { projectId: number; name: string } | null
   assistant?: AssistantTurn[]
   validation: ValidationPlan[]
+  intake: { status: 'idle' | 'running' | 'error'; id: string | null; questionId: string | null; message: string; startedAt: string | null }
 }
 export interface Point { x: number; y: number }
 export interface AssistantReply { message: string; destination: 'ideation' | 'timeline' | 'people' | 'evidence' | 'research'; phase: PhaseId }
@@ -97,7 +98,12 @@ export interface AssistantTurn extends AssistantReply { question: string; at: st
 /** A note the assistant is about to change; `at` is where a new note will appear. */
 export interface EditTarget { op: 'update' | 'create' | 'delete' | 'link' | 'unlink'; id: string; at?: Point }
 export interface AssistantEdit { question: string; plan: string; targets: EditTarget[] }
-export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply; edit?: AssistantEdit }
+export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply; edit?: AssistantEdit; activity?: { action: string; startedAt: string } | null }
+export function projectBusy(project: Project | null) {
+  if (project?.document.intake?.status === 'running') return 'thinking'
+  if (project?.activity) return project.activity.action === 'research' ? 'research' : 'thinking'
+  return ''
+}
 export interface ProjectSummary { id: number; name: string; progress: number; phaseProgress?: Record<PhaseId, number>; activePhase?: PhaseId; parent: ProjectDocument['parent'] }
 export interface Capabilities { ai: boolean; research: boolean; semanticMemory: boolean }
 export interface MemoryHit { projectId: number; note: KnowledgeNote; score: number }

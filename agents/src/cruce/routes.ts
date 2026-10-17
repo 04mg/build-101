@@ -8,9 +8,11 @@ import { ProjectStore } from './store.js';
 import { canExplore, currentAssessment, destinationSchema, discoverySchema, emptyDocument, link, phaseSchema, positionSchema, publicProject, putNote, surveyDraftSchema, validationCounts, type ProjectDocument } from './model.js';
 import { analyzeValidation, ensureValidation, generateValidation, INSTRUMENT_VERSION, resetAssessment } from './validation.js';
 import { deliverableSchema, generateDeliverable, saveDeliverable } from './deliverables.js';
-import { advanceIntake, rewindIntake } from './intake.js';
+import { MAX_ANSWERS, rewindIntake } from './intake.js';
+import { IntakeJobs } from './intakeJobs.js';
+import { ResearchJobs } from './researchJobs.js';
 import { reportAIFailure, runClaude } from './claude.js';
-import { research, searchMemory } from './research.js';
+import { searchMemory } from './research.js';
 import { applyAssist, planAssist, reopenDecision, targetSchema } from './edits.js';
 
 const text = z.string().trim().min(1).max(4000);
@@ -28,6 +30,7 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('assist'), question: text, edit: z.boolean().default(false), selected: z.string().max(100).optional() }),
   z.object({ action: z.literal('assist-apply'), question: text, plan: text, targets: z.array(targetSchema).min(1).max(8) }),
   z.object({ action: z.literal('answer'), value: text, questionId: z.string() }),
+  z.object({ action: z.literal('retry-intake') }),
   z.object({ action: z.literal('confirm') }),
   z.object({ action: z.literal('rewind'), index: z.number().int().nonnegative() }),
   z.object({ action: z.literal('layout'), positions: z.record(z.string(), positionSchema) }),
@@ -44,6 +47,30 @@ const actionSchema = z.discriminatedUnion('action', [
 
 export function createCruceRoutes(config: Config) {
   const locks = new Set<string>();
+  const activities = new Map<string, { action: string; startedAt: string }>();
+  const intakeJobs = new IntakeJobs(config), researchJobs = new ResearchJobs(config);
+  const maintenance = new Map<string, Promise<void>>();
+  const load = () => locks.size + intakeJobs.size + researchJobs.size + maintenance.size;
+
+  function maintain(key: string, store: ProjectStore, id: number) {
+    if (maintenance.has(key)) return;
+    const work = (async () => {
+      const project = await store.get(id);
+      if (!project.document.confirmed || project.document.intake.status === 'running') return;
+      const previous = JSON.stringify(project.document.validation);
+      const synchronized = ensureValidation(project.document);
+      if (project.document.validation.some(p => p.instrumentStatus === 'pending' || (p.instrumentVersion < INSTRUMENT_VERSION && p.instrumentStatus !== 'error'))) {
+        try { await generateValidation(config, project.document); } catch { /* Persist a recoverable error, never a substitute instrument. */ }
+      }
+      const analyzed = await analyzeValidation(config, project.document);
+      if (synchronized || analyzed || previous !== JSON.stringify(project.document.validation)) await store.save(project);
+    })().catch(error => {
+      // Foreground edits and incoming responses win. A later refresh recomputes
+      // from their current revision rather than blocking them behind model calls.
+      if (!(error instanceof HttpError) || error.status !== 409) console.error('Cruce maintenance failed', JSON.stringify({ id, status: error instanceof HttpError ? error.status : 500 }));
+    }).finally(() => { maintenance.delete(key); });
+    maintenance.set(key, work);
+  }
 
   return async function handleCruce(request: IncomingMessage, response: ServerResponse, pathname: string) {
     if (!pathname.startsWith('/api/agents/cruce/')) return false;
@@ -69,66 +96,80 @@ export function createCruceRoutes(config: Config) {
     const lock = `${user.sub}:${id ?? 'new'}`;
     if (id && request.method === 'GET' && !match?.[2]) {
       let project = await store.get(id);
-      if (project.document.research.status === 'running' && !locks.has(lock)) {
-        project.document.research = { status: 'error', message: 'La investigación se interrumpió. Podés reintentar; las notas guardadas siguen disponibles.' };
-        project = await store.save(project);
+      // Existing long grills can finish from their saved answers immediately;
+      // upgrading the app must not ask the founder one more legacy question.
+      if (!project.document.confirmed && project.document.question && project.document.answers.length >= MAX_ANSWERS && project.document.intake.status === 'idle' && !locks.has(lock) && load() < 4) {
+        project.document.intake = { status: 'running', id: randomUUID(), questionId: project.document.answers.at(-1)!.questionId,
+          message: 'Cerrando el encuadre con lo que ya nos contaste…', startedAt: new Date().toISOString() };
+        try { project = await store.save(project); }
+        catch (error) { if (!(error instanceof HttpError) || error.status !== 409) throw error; project = await store.get(id); }
       }
-      if (project.document.confirmed && !locks.has(lock)) {
-        locks.add(lock);
+      if (project.document.intake.status === 'running' && !intakeJobs.has(lock) && load() < 4) intakeJobs.start(lock, store, id);
+      if (project.document.research.status === 'running' && !researchJobs.has(lock) && load() < 4) researchJobs.start(lock, store, id);
+      if (config.ai && config.exaApiKey && project.document.answers.length >= 2 && project.document.nodes.some(n => n.kind === 'problem') && project.document.research.status === 'idle' && !locks.has(lock) && load() < 4) {
+        project.document.research = { status: 'running', message: 'Buscando contexto y alternativas mientras definimos el problema…', at: new Date().toISOString() };
         try {
-          const previous = JSON.stringify(project.document.validation);
-          const synchronized = ensureValidation(project.document);
-          if (project.document.validation.some(p => p.instrumentStatus === 'pending' || (p.instrumentVersion < INSTRUMENT_VERSION && p.instrumentStatus !== 'error'))) {
-            try { await generateValidation(config, project.document); } catch { /* Persist the recoverable generation error, never a substitute instrument. */ }
-          }
-          const analyzed = await analyzeValidation(config, project.document);
-          if (synchronized || analyzed || previous !== JSON.stringify(project.document.validation)) project = await store.save(project);
+          project = await store.save(project);
+          researchJobs.start(lock, store, id);
         } catch (error) {
           if (!(error instanceof HttpError) || error.status !== 409) throw error;
-          // Responses can arrive during a long synthesis. Return their current
-          // revision; the next refresh retries analysis without losing any data.
           project = await store.get(id);
-        } finally { locks.delete(lock); }
+        }
       }
-      json(response, 200, publicProject(project)); return true;
+      if (project.document.confirmed && !locks.has(lock) && load() < 4) maintain(lock, store, id);
+      json(response, 200, { ...publicProject(project), activity: activities.get(lock) ?? null }); return true;
     }
     if (request.method !== 'POST') throw new HttpError(405, 'Usá POST para actualizar el recorrido.');
-    if (locks.has(lock)) throw new HttpError(409, 'El agente está actualizando este proyecto. Reintentá en unos segundos.');
-    if (locks.size >= 4) throw new HttpError(429, 'Hay varios procesos en curso. Reintentá en unos segundos.');
+    const payload = await readJson(request);
+    if (id && !match?.[2]) {
+      const current = await store.get(id), action = actionSchema.safeParse(payload), last = current.document.answers.at(-1);
+      // A retry of an accepted turn returns its state, even after it completed.
+      if (action.success && action.data.action === 'answer' && current.document.intake.id && current.document.intake.questionId === action.data.questionId && last?.questionId === action.data.questionId && last.value === action.data.value) {
+        if (current.document.intake.status === 'running' && !intakeJobs.has(lock) && load() < 4) intakeJobs.start(lock, store, id);
+        json(response, current.document.intake.status === 'running' ? 202 : 200, publicProject(current)); return true;
+      }
+      if (current.document.intake.status === 'running' && !(action.success && action.data.action === 'layout')) throw new HttpError(423, 'Tu respuesta ya está guardada y el asistente sigue trabajando. El chat se actualizará automáticamente.');
+    }
+    if (locks.has(lock)) throw new HttpError(423, 'Hay una operación en curso. El chat mostrará su estado y se actualizará al terminar.');
+    if (load() >= 4) throw new HttpError(429, 'Hay varios procesos en curso. Reintentá en unos segundos.');
     locks.add(lock);
+    activities.set(lock, { action: match?.[2] ? 'research' : 'update', startedAt: new Date().toISOString() });
     try {
       if (pathname === '/api/agents/cruce/projects') {
-        const parsed = z.object({ idea: text }).safeParse(await readJson(request));
+        const parsed = z.object({ idea: text }).safeParse(payload);
         if (!parsed.success) throw new HttpError(400, 'Contanos tu idea en hasta 4000 caracteres.');
+        if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para generar la entrevista con IA.');
         const doc = emptyDocument();
         doc.answers.push({ questionId: 'idea', prompt: doc.question!.prompt, value: parsed.data.idea, at: new Date().toISOString() });
-        const result = await advanceIntake(config, doc);
-        if (!doc.question) doc.confirmed = true;
-        const project = await store.create(user.sub, result.name, doc);
-        json(response, 201, publicProject(project)); return true;
+        doc.intake = { status: 'running', id: randomUUID(), questionId: 'idea', message: 'Preparando el encuadre con IA…', startedAt: new Date().toISOString() };
+        const project = await store.create(user.sub, parsed.data.idea.slice(0, 60), doc);
+        intakeJobs.start(`${user.sub}:${project.id}`, store, project.id);
+        json(response, 202, publicProject(project)); return true;
       }
       if (!id) throw new HttpError(404, 'Ruta de cruce no disponible.');
       let project = await store.get(id);
       if (match?.[2]) {
-        if (!project.document.confirmed) throw new HttpError(400, 'Confirmá primero el problema a investigar.');
+        if (!project.document.nodes.some(n => n.kind === 'problem') || project.document.answers.length < 2) throw new HttpError(400, 'Primero contanos una aclaración de tu idea para investigar su contexto.');
         if (!config.ai || !config.exaApiKey) throw new HttpError(503, 'Iniciá sesión en Claude Code y agregá EXA_API_KEY en app/.env para investigar la web.');
-        project.document.research = { status: 'running', message: 'Buscando alternativas, experiencias y contraejemplos…', at: new Date().toISOString() };
-        project = await store.save(project);
-        try {
-          await research(config, project.document);
-        } catch {
-          project.document.research = { status: 'error', message: 'No se pudo completar el research. Podés reintentar.' };
+        if (project.document.research.status !== 'running') {
+          project.document.research = { status: 'running', message: 'Buscando alternativas, experiencias y contraejemplos…', at: new Date().toISOString() };
+          project = await store.save(project);
         }
-        project = await store.save(project);
-        json(response, 200, publicProject(project)); return true;
+        researchJobs.start(lock, store, id);
+        json(response, 202, publicProject(project)); return true;
       }
-      const body = await readJson(request);
+      const body = payload;
       const revision = z.object({ revision: z.number().int().nonnegative() }).safeParse(body);
       if (!revision.success) throw new HttpError(400, 'Falta la versión del proyecto.');
-      if (revision.data.revision !== project.document.revision) throw new HttpError(409, 'El proyecto cambió. Actualizá para ver la última versión.');
       const parsed = actionSchema.safeParse(body);
       if (!parsed.success) throw new HttpError(400, 'Revisá los datos de la nota o respuesta.');
       const action = parsed.data;
+      // Research/layout revisions do not invalidate an answer to the same
+      // question. The question ID is the optimistic lock for onboarding turns.
+      const sameQuestion = action.action === 'answer' && project.document.question?.id === action.questionId && project.document.intake.status === 'idle';
+      const retryCurrent = action.action === 'retry-intake' && project.document.intake.status === 'error';
+      if (revision.data.revision !== project.document.revision && !sameQuestion && !retryCurrent) throw new HttpError(409, 'El proyecto cambió. Actualizá para ver la última versión.');
+      activities.set(lock, { ...activities.get(lock)!, action: action.action });
       const doc = project.document;
       let warning: string | undefined, assistant: unknown, edit: unknown;
       if (action.action === 'phase') {
@@ -225,11 +266,32 @@ export function createCruceRoutes(config: Config) {
       }
       if (action.action === 'answer') {
         if (!doc.question || doc.question.id !== action.questionId) throw new HttpError(409, 'Esa pregunta ya fue respondida.');
-        const { prompt, options, placeholder } = doc.question;
-        doc.answers.push({ questionId: action.questionId, prompt, options, placeholder, value: action.value, at: new Date().toISOString() });
-        const result = await advanceIntake(config, doc);
-        if (result.name) project.name = result.name;
-        if (!doc.question) doc.confirmed = true;
+        if (doc.intake.status === 'error') throw new HttpError(400, 'Reintentá la respuesta guardada antes de continuar el chat.');
+        if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para generar la entrevista con IA.');
+        for (let attempt = 0; attempt < 5; attempt++) {
+          if (attempt) project = await store.get(id);
+          const current = project.document, last = current.answers.at(-1);
+          if (current.intake.questionId === action.questionId && last?.questionId === action.questionId && last.value === action.value) {
+            if (current.intake.status === 'running') intakeJobs.start(lock, store, id);
+            json(response, current.intake.status === 'running' ? 202 : 200, publicProject(project)); return true;
+          }
+          if (current.question?.id !== action.questionId || current.intake.status !== 'idle') throw new HttpError(409, 'Esa pregunta ya fue respondida.');
+          const { prompt, options, placeholder } = current.question;
+          current.answers.push({ questionId: action.questionId, prompt, options, placeholder, value: action.value, at: new Date().toISOString() });
+          current.intake = { status: 'running', id: randomUUID(), questionId: action.questionId, message: 'Preparando la próxima pregunta con IA…', startedAt: new Date().toISOString() };
+          try { project = await store.save(project); }
+          catch (error) { if (error instanceof HttpError && error.status === 409 && attempt < 4) continue; throw error; }
+          intakeJobs.start(lock, store, id);
+          json(response, 202, publicProject(project)); return true;
+        }
+      }
+      if (action.action === 'retry-intake') {
+        if (doc.intake.status !== 'error') throw new HttpError(400, 'No hay una respuesta pendiente de reintentar.');
+        if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para continuar.');
+        doc.intake = { ...doc.intake, id: randomUUID(), status: 'running', message: 'Reintentando la respuesta guardada…', startedAt: new Date().toISOString() };
+        project = await store.save(project);
+        intakeJobs.start(lock, store, id);
+        json(response, 202, publicProject(project)); return true;
       }
       if (action.action === 'rewind') {
         if (doc.confirmed) throw new HttpError(400, 'El problema ya está confirmado.');
@@ -351,6 +413,6 @@ export function createCruceRoutes(config: Config) {
       }
       project = await store.save(project);
       json(response, 200, { ...publicProject(project), warning, assistant, edit }); return true;
-    } finally { locks.delete(lock); }
+    } finally { locks.delete(lock); activities.delete(lock); }
   };
 }

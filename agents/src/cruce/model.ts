@@ -86,6 +86,8 @@ export const documentSchema = z.object({
   // Conversation with the bottom assistant, newest last.
   assistant: z.array(assistantTurnSchema).default([]),
   validation: z.array(validationPlanSchema).default([]),
+  intake: z.object({ status: z.enum(['idle', 'running', 'error']), id: z.string().nullable(), questionId: z.string().nullable(),
+    message: z.string(), startedAt: z.string().nullable() }).default({ status: 'idle', id: null, questionId: null, message: '', startedAt: null }),
 });
 export type ProjectDocument = z.infer<typeof documentSchema>;
 export type Project = { id: number; name: string; document: ProjectDocument; updatedAt: string };
@@ -97,7 +99,8 @@ export const initialQuestion: Question = {
 
 export function emptyDocument(): ProjectDocument {
   return { version: 1, revision: 0, activePhase: 'discover', answers: [], question: initialQuestion, nodes: [], edges: [], positions: {}, confirmed: false,
-    research: { status: 'idle', message: '' }, decision: null, pivots: [], parent: null, assistant: [], validation: [] };
+    research: { status: 'idle', message: '' }, decision: null, pivots: [], parent: null, assistant: [], validation: [],
+    intake: { status: 'idle', id: null, questionId: null, message: '', startedAt: null } };
 }
 
 export function progress(doc: ProjectDocument) {

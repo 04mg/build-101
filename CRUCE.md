@@ -30,9 +30,14 @@ los instrumentos legados se regeneran con IA antes de mostrarlos o compartirlos.
 Los errores de IA muestran una causa y una referencia que se puede encontrar en
 `.run/agents.log`, sin registrar prompts ni claves.
 
-Discover hace grill-me: el agente recorre segmento → situación concreta → proceso
-actual → pain points → evidencia, redacta cada pregunta según la conversación y
-repregunta una vez si la respuesta es vaga. Al cubrir las ramas cierra con el
+Discover hace un grill liviano: como máximo tres preguntas del asistente después
+de la idea inicial, con cierre anticipado si ya alcanza para encuadrar segmento,
+situación y fricción. No agota un cuestionario de ramas ni audita evidencia de
+terceros: las incertidumbres pasan al research y a las hipótesis. Las preguntas
+son abiertas, sin opciones de respuesta ni recomendaciones. Tanto la idea inicial
+como el compositor del chat tienen dictado con micrófono: el reconocimiento de voz
+del navegador escribe texto intermedio en vivo en el mismo campo, editable y sin
+enviarlo automáticamente. Cierra con el
 problem statement y exactamente 3 hipótesis falsables, priorizadas por riesgo e
 incertidumbre. Cada una incluye una encuesta estructurada y una guía de entrevista.
 No trabaja Customer Journey.
@@ -50,7 +55,8 @@ se puede ajustar desde su nota, reabriendo la validación.
 Sin SMTP, `/api/agents/register` crea la cuenta en TrailBase y la marca verificada.
 
 1. **Discover** agrupa Discover & Frame Problem y Validate Problem. Idea → grill
-   preguntas → confirmar problema → research → experimento → evidencia → decisión
+   breve con research exploratorio en paralelo desde la primera aclaración →
+   problema provisional → experimento → evidencia → decisión
    o fork. Cada hipótesis tiene una encuesta editable con link público `/s/:token`,
    resultados por versión, una guía de entrevista editable y múltiples entrevistas
    por persona. El micrófono usa MediaRecorder y el reconocimiento de voz disponible
@@ -115,6 +121,15 @@ seleccionar notas. Las relaciones se agregan desde el detalle de una nota.
 Los endpoints viven en `/api/agents/cruce/`. Las mutaciones llevan una revisión
 del proyecto para detectar clientes desactualizados. El research guarda su estado
 antes de comenzar; si el proceso se reinicia, queda disponible para reintentar.
+El onboarding guarda cada respuesta y su operación antes de llamar a la IA y
+responde HTTP 202. El navegador consulta el estado con un único polling sin
+solapamientos: una desconexión no cancela ni pierde el turno, un reenvío del mismo
+turno es idempotente y un reinicio retoma la operación pendiente. Los errores
+muestran una acción para reintentar la respuesta ya guardada, sin volver a escribirla.
+El research y la síntesis se ejecutan en segundo plano: los GET no esperan llamadas
+al modelo ni retienen el lock de la conversación. Sus resultados se integran con
+la revisión más reciente, conservando las aclaraciones del fundador y el layout.
+La revisión de research no invalida una respuesta a la misma pregunta de onboarding.
 Los endpoints públicos `/api/public/surveys/:token` viven en el WASM: exponen solo
 el cuestionario y aceptan respuestas sin login. El guardado de las respuestas es
 atómico; el mismo reloj de revisión protege las ediciones del propietario de

@@ -163,6 +163,7 @@ legend { padding: 0; margin-bottom: 12px; font-size: 12px; font-weight: 500; }
 .chat-restart { gap: 5px; }
 .chat-restart:hover:not(:disabled) { color: var(--ink); }
 .chat-step { padding: 3px 8px; border-radius: 20px; background: var(--blue-soft); color: var(--blue); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.chat-research-status { display: flex; align-items: center; gap: 7px; padding: 8px 20px; border-bottom: 1px solid var(--line); font-size: 10px; color: var(--muted); background: var(--surface); }
 .chat-thread { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding: 20px; }
 .chat-turn { display: flex; flex-direction: column; gap: 14px; }
 .chat-agent { display: flex; align-items: flex-start; gap: 9px; max-width: 94%; }
@@ -186,6 +187,12 @@ legend { padding: 0; margin-bottom: 12px; font-size: 12px; font-weight: 500; }
 .chat-composer { display: flex; align-items: flex-end; gap: 9px; margin: 0 14px 14px; padding: 8px 8px 8px 14px; border: 1px solid #d5d2c9; border-radius: 13px; background: white; }
 .chat-composer:focus-within { border-color: var(--blue); }
 .chat-composer textarea { border: 0; box-shadow: none; padding: 8px 0; resize: none; max-height: 140px; font-size: 13px; line-height: 1.5; field-sizing: content; }
+.voice-input-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 36px; width: 36px; height: 36px; min-height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); }
+.voice-input-button.listening { color: #ac4237; background: #fbece8; box-shadow: 0 0 0 4px #ac42370b; }
+.voice-active { border-color: #b58d82; }
+.voice-input-status { margin: -6px 20px 13px; font-size: 10px; color: var(--muted); line-height: 1.6; }
+.voice-input-status.error { color: #ab4234; }
+.new-idea-center > .voice-input-status { margin: 12px auto 0; }
 .problem-summary { display: grid; gap: 7px; margin-top: 11px; padding: 12px; border-radius: 9px; background: white; border: 1px solid var(--line); white-space: normal; }
 .problem-summary .eyebrow { font-size: 9px; }
 .problem-summary p { font-size: 13px; }

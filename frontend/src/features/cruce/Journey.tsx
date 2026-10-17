@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowRight, Check, LoaderCircle, X } from 'lucide-react'
+import { ArrowRight, LoaderCircle, X } from 'lucide-react'
 import { initialQuestion, statusLabels, type Capabilities, type KnowledgeNote, type Project, type Question } from './types'
 import { sourceContribution } from './sourceContribution'
+import { useVoiceInput } from './useVoiceInput'
+import { VoiceInputButton } from './VoiceInputButton'
 
 interface Props {
   project: Project | null
@@ -68,11 +70,12 @@ export function Journey(props: Props) {
 }
 
 function QuestionForm({ question, count, busy, onAnswer }: { question: Question; count: number; busy: string; onAnswer: Props['onAnswer'] }) {
-  const [value, setValue] = useState(''), [choice, setChoice] = useState('')
+  const [value, setValue] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const voice = useVoiceInput({ value, onChange: setValue, disabled: Boolean(busy) || submitting, maxLength: 3999 })
   async function submit(event: FormEvent) {
     event.preventDefault()
-    const answer = [choice, value.trim()].filter(Boolean).join('\n')
+    const answer = voice.stop().trim()
     if (!answer || busy || submitting) return
     setSubmitting(true)
     try { await onAnswer(answer, question) } finally { setSubmitting(false) }
@@ -80,12 +83,10 @@ function QuestionForm({ question, count, busy, onAnswer }: { question: Question;
   return <form className="grill-form" onSubmit={event => void submit(event)}>
     <div className="panel-kicker">DISCOVER / DEFINIR EL PROBLEMA <span>Pregunta {count}</span></div>
     <h2>{question.prompt}</h2>
-    <div className="suggestions">{question.options.map(option => <button type="button" key={option.label} aria-pressed={choice === option.label} className={`suggestion ${choice === option.label ? 'chosen' : ''}`} disabled={Boolean(busy)} onClick={() => setChoice(c => c === option.label ? '' : option.label)}>
-      <span>{option.label}</span>{option.recommended && <small>Recomendado{option.reason ? ` · ${option.reason}` : ''}</small>}{choice === option.label && <Check size={14} className="choice-check" />}
-    </button>)}</div>
-    <div className="answer-composer"><textarea aria-label={question.options.length ? 'Tu respuesta o más contexto' : 'Tu idea'} value={value} onChange={event => setValue(event.target.value)} placeholder={question.options.length ? 'O escribí tu respuesta…' : question.placeholder} maxLength={Math.max(0, 3999 - choice.length)} rows={question.options.length ? 3 : 6} disabled={Boolean(busy)} />
-      <div><button className="primary" type="submit" disabled={Boolean(busy) || submitting || (!value.trim() && !choice)}>{busy || submitting ? <><LoaderCircle size={14} className="spin" /> Pensando</> : <>Continuar <ArrowRight size={14} /></>}</button></div>
+    <div className="answer-composer"><textarea aria-label="Tu respuesta" value={value} onChange={event => { voice.stop(); setValue(event.target.value) }} placeholder={voice.listening ? 'Te escucho…' : question.placeholder} maxLength={3999} rows={4} disabled={Boolean(busy)} />
+      <div><VoiceInputButton voice={voice} disabled={Boolean(busy) || submitting} /><button className="primary" type="submit" disabled={Boolean(busy) || submitting || !value.trim()}>{busy || submitting ? <><LoaderCircle size={14} className="spin" /> Pensando</> : <>Continuar <ArrowRight size={14} /></>}</button></div>
     </div>
+    {voice.error && <p className="input-hint error" role="alert">{voice.error}</p>}
     {!count && <p className="input-hint">No hace falta tener la solución.</p>}
   </form>
 }

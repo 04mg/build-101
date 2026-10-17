@@ -15,7 +15,7 @@ import { PublicSurvey } from '@/features/cruce/PublicSurvey'
 import { ProjectMenu } from '@/features/cruce/ProjectMenu'
 import { Timeline } from '@/features/cruce/Timeline'
 import { artifacts, phasePercent, phases } from '@/features/cruce/phases'
-import { canExplore, initialQuestion, type AssistantReply, type Capabilities, type DeliverableKey, type EditTarget, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
+import { canExplore, initialQuestion, projectBusy, type AssistantReply, type Capabilities, type DeliverableKey, type EditTarget, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
 
 type Page = 'ideation' | 'journey' | 'people' | 'phase'
 
@@ -30,11 +30,12 @@ function WorkspaceApp() {
   const [capabilities, setCapabilities] = useState<Capabilities>({ ai: false, research: false, semanticMemory: false })
   const [page, setPage] = useState<Page>('ideation'), [phase, setPhase] = useState<PhaseId>('discover'), [navOpen, setNavOpen] = useState(true)
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<DiscoverPanel>('journey')
-  const [busy, setBusy] = useState(''), [error, setError] = useState(''), [warning, setWarning] = useState('')
+  const [requestBusy, setBusy] = useState(''), [error, setError] = useState(''), [warning, setWarning] = useState('')
   const [search, setSearch] = useState<string | null>(null)
   const [artifact, setArtifact] = useState<{ key: DeliverableKey; instruction?: string } | null>(null)
   const [editing, setEditing] = useState<EditTarget[]>([])
   const currentRef = useRef(project), busyRef = useRef(false), loadSequence = useRef(0)
+  const busy = requestBusy || projectBusy(project)
 
   const accept = useCallback((result: Project) => {
     if (currentRef.current?.id === result.id && currentRef.current.document.activePhase !== 'discover' && result.document.activePhase === 'discover') { setPage('ideation'); setArtifact(null) }
@@ -48,9 +49,11 @@ function WorkspaceApp() {
   }, [])
 
   const initialize = useCallback(async () => {
+    let authenticated = false
     try {
       const result = await getSession()
       if (!result.auth_token) { setSession('signed-out'); return }
+      authenticated = true
       if (window.location.pathname === '/login') {
         const destination = new URLSearchParams(window.location.search).get('redirect_uri')
         if (destination?.startsWith('/_/admin') || destination === '/_/') { window.location.replace('/_/admin/'); return }
@@ -64,7 +67,7 @@ function WorkspaceApp() {
         const loaded = await getProject(Number(remembered)); accept(loaded)
         setPage(loaded.document.activePhase === 'discover' ? 'ideation' : 'phase')
       }
-    } catch (cause) { setSession('signed-out'); setError(message(cause)) }
+    } catch (cause) { setSession(authenticated ? 'signed-in' : 'signed-out'); setError(message(cause)) }
   }, [accept])
 
   useEffect(() => {
@@ -73,30 +76,31 @@ function WorkspaceApp() {
     return () => { active = false }
   }, [initialize])
 
-  const projectId = project?.id, researchStatus = project?.document.research.status
-  useEffect(() => {
-    if (!projectId || researchStatus !== 'running') return
-    const timer = window.setInterval(() => {
-      void getProject(projectId).then(result => {
-        if (currentRef.current?.id === projectId && result.document.revision >= currentRef.current.document.revision) accept(result)
-      }).catch(() => { /* The foreground request reports errors. */ })
-    }, 2500)
-    return () => clearInterval(timer)
-  }, [projectId, researchStatus, accept])
-
-  // Public respondents can add evidence while the founder has the graph open.
+  const projectId = project?.id
+  const processing = Boolean(projectBusy(project) || project?.document.research.status === 'running')
+  // One non-overlapping poll handles onboarding, research and incoming evidence.
+  // It continues after a dropped POST and reconnects to the persisted operation.
   useEffect(() => {
     if (!projectId) return
-    const refresh = () => {
-      if (busyRef.current || document.visibilityState === 'hidden') return
-      void getProject(projectId).then(result => {
-        if (!busyRef.current && currentRef.current?.id === projectId && result.document.revision > currentRef.current.document.revision) accept(result)
-      }).catch(() => { /* Keep working offline; explicit actions report errors. */ })
+    let active = true, inFlight = false
+    const refresh = async () => {
+      if (!active || inFlight || busyRef.current || document.visibilityState === 'hidden') return
+      inFlight = true
+      try {
+        const result = await getProject(projectId, AbortSignal.timeout(20000)), current = currentRef.current
+        if (active && !busyRef.current && current?.id === projectId && result.document.revision >= current.document.revision
+          && (result.document.revision > current.document.revision || JSON.stringify(result.activity ?? null) !== JSON.stringify(current.activity ?? null))) {
+          accept(result)
+          if (result.document.intake?.status === 'error') setError(result.document.intake.message)
+        }
+      } catch { /* A network interruption does not cancel the server operation. */ }
+      finally { inFlight = false }
     }
-    const timer = window.setInterval(refresh, 8000)
-    window.addEventListener('focus', refresh)
-    return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
-  }, [projectId, accept])
+    const onFocus = () => { void refresh() }
+    const timer = window.setInterval(onFocus, processing ? 2500 : 8000)
+    window.addEventListener('focus', onFocus)
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', onFocus) }
+  }, [projectId, processing, accept])
 
   async function selectProject(id: string, nodeId?: string) {
     if (busyRef.current) return
@@ -135,7 +139,7 @@ function WorkspaceApp() {
 
   async function mutate(action: Record<string, unknown>): Promise<Project | null> {
     const active = currentRef.current
-    if (!active || busyRef.current) return null
+    if (!active || busyRef.current || projectBusy(active)) return null
     busyRef.current = true
     setBusy(action.action === 'answer' || action.action === 'assist' ? 'thinking' : action.action === 'assist-apply' ? 'editing' : action.action === 'generate-deliverable' ? 'generating' : 'save')
     setError(''); setWarning('')
@@ -144,12 +148,18 @@ function WorkspaceApp() {
       result = await updateProject(active, action); accept(result)
       if (action.action === 'fork') { setSelected(null); setPanel('journey'); setPage('ideation'); setPhase('discover') }
     } catch (cause) {
-      setError(message(cause))
-      if (cause instanceof ApiError && cause.status === 409) {
-        try { accept(await getProject(active.id)) } catch { /* Display original conflict. */ }
+      let recovered = false
+      if (!(cause instanceof ApiError) || [409, 423, 502, 503, 504, 524].includes(cause.status)) {
+        try {
+          const latest = await getProject(active.id); accept(latest)
+          if (action.action === 'answer' && latest.document.intake?.questionId === action.questionId
+            && latest.document.answers.some(a => a.questionId === action.questionId && a.value === action.value)) {
+            result = latest; recovered = true
+          } else if (projectBusy(latest)) recovered = true
+        } catch { /* Keep the draft; the persisted turn can be recovered by polling. */ }
       }
+      if (!recovered) setError(message(cause))
     } finally { busyRef.current = false; setBusy('') }
-    if (result && (action.action === 'confirm' || (action.action === 'answer' && !active.document.confirmed && result.document.confirmed)) && capabilities.research) void runResearch(result.id)
     return result
   }
 
