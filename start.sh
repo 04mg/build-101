@@ -43,7 +43,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-say "$CYAN" "◆ CoFounder  ·  Preparing app…"
+say "$CYAN" "◆ Assistant  ·  Preparing app…"
 if ! {
   pnpm --dir agents install --frozen-lockfile &&
   pnpm --dir frontend install --frozen-lockfile &&
@@ -104,7 +104,7 @@ wait_ready "http://127.0.0.1:$APP_PORT/api/agents/health" "$NODE_PID" Node .run/
 # Verify forwarding as well as both process health checks.
 curl --fail --silent --max-time 5 "http://127.0.0.1:$APP_PORT/api/ping" >/dev/null
 
-printf '\n%s◆ CoFounder%s\n\n' "$BOLD$CYAN" "$RESET"
+printf '\n%s◆ Assistant%s\n\n' "$BOLD$CYAN" "$RESET"
 say "$GREEN" "✓ App   http://localhost:$APP_PORT"
 
 if [[ "$TUNNEL_ENABLED" == 1 ]]; then

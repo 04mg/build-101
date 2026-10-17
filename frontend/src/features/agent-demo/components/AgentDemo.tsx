@@ -28,7 +28,7 @@ function AgentChat() {
       <div className="messages" role="log" aria-label="Conversación" aria-live="polite">
         {messages.map(message => (
           <div key={message.id} className="message">
-            <strong>{message.role === 'user' ? 'Tú' : 'CoFounder'}</strong>
+            <strong>{message.role === 'user' ? 'Tú' : 'Asistente'}</strong>
             <p>{message.parts.map(part => part.type === 'text' ? part.text : '').join('')}</p>
           </div>
         ))}

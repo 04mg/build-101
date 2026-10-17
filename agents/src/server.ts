@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 const config = loadConfig();
 const { server, abortRuns } = createApp(config);
 server.listen(config.port, config.host, () => {
-  console.log(`CoFounder entry point: http://${config.host}:${config.port}`);
+  console.log(`Agent service: http://${config.host}:${config.port}`);
   console.log(`TrailBase upstream: ${config.trailbaseUrl}`);
   console.log(config.apiKey ? `Agent model: ${config.model}` : 'Agent disabled until AI_API_KEY is set.');
 });

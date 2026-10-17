@@ -40,7 +40,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-say "$CYAN" "◆ CoFounder  ·  Preparing development environment…"
+say "$CYAN" "◆ Assistant  ·  Preparing development environment…"
 if ! {
   pnpm --dir agents install --frozen-lockfile &&
   pnpm --dir frontend install --frozen-lockfile &&
@@ -79,7 +79,7 @@ pids+=("$AGENT_PID")
 FRONTEND_PID=$!
 pids+=("$FRONTEND_PID")
 
-printf '\n%s◆ CoFounder%s\n\n' "$BOLD$CYAN" "$RESET"
+printf '\n%s◆ Assistant%s\n\n' "$BOLD$CYAN" "$RESET"
 say "$GREEN" "✓ Frontend  http://localhost:5173  ·  live reload"
 say "$GREEN" "✓ Agent API http://localhost:$APP_PORT  ·  restarts on save"
 printf '\n%sPress Ctrl+C to stop.%s\n\n' "$DIM" "$RESET"

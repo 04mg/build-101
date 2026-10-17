@@ -4,7 +4,7 @@ import { pipeUIMessageStreamToResponse, toUIMessageStream } from 'ai';
 import { z } from 'zod';
 import type { Config } from './config.js';
 import { authenticate } from './auth.js';
-import { createCofounderAgent } from './agents/cofounder.js';
+import { createAssistantAgent } from './agents/assistant.js';
 import { HttpError, json, readJson } from './http.js';
 
 const chatRequest = z.object({
@@ -18,7 +18,7 @@ const chatRequest = z.object({
 });
 
 export function createApp(config: Config) {
-  const agent = createCofounderAgent(config);
+  const agent = createAssistantAgent(config);
   // One public origin; do not consume or rewrite proxied auth/record request bodies.
   const proxy = createProxyMiddleware<IncomingMessage, ServerResponse>({
     target: config.trailbaseUrl,

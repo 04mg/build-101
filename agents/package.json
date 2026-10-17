@@ -1,5 +1,5 @@
 {
-  "name": "cofounder-agents",
+  "name": "assistant-agents",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },

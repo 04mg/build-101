@@ -39,7 +39,7 @@ export async function signOut(): Promise<void> {
 
 export async function agentHeaders(): Promise<Record<string, string>> {
   const session = await getSession()
-  if (!session.auth_token) throw new Error('Inicia sesión para hablar con CoFounder.')
+  if (!session.auth_token) throw new Error('Inicia sesión para hablar con el asistente.')
   return {
     Authorization: `Bearer ${session.auth_token}`,
     ...(session.refresh_token ? { 'Refresh-Token': session.refresh_token } : {}),
