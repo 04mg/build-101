@@ -1,14 +1,15 @@
 # Rust artifacts
-ai-component/target/
 target/
+**/target/
 
 # Node / JS
 node_modules/
+**/node_modules/
 .npm/
 
 # TrailBase ephemeral logs
-traildepot/data/logs.db*
-traildepot/data/session.db*
+backend/data/logs.db*
+backend/data/session.db*
 
 # OS & Temp
 .DS_Store
