@@ -18,30 +18,56 @@ Usa la sesión local de `claude` (iniciá sesión una vez en esa máquina).
 
 - `EXA_API_KEY`: el research le da a Claude el MCP de Exa (`web_search_exa`, `web_fetch_exa`) para buscar alternativas, experiencias y contraejemplos. Solo se guardan fuentes cuya URL devolvió Exa; la cita queda marcada solo si aparece textual en el resultado.
 
-Sin Claude Code disponible se usa una entrevista guiada explícita; no se inventan resultados de investigación. Si una búsqueda falla, el estado queda reintentable.
+Todo el contenido de investigación (preguntas del grill, hipótesis, encuestas,
+entrevistas, experimento y aprendizajes) se genera con IA desde el contexto real.
+No hay instrumentos ni entrevistas de fallback. Las llamadas hacen hasta seis
+intentos, con backoff exponencial, jitter, tiempos de espera progresivos y feedback
+de validación. Los instrumentos pasan una segunda revisión de IA que comprueba
+rol, evento, resultado y correspondencia con el criterio de cada hipótesis.
+Si se agotan los intentos, se muestra un error recuperable y no se publica contenido
+genérico. Los instrumentos de versiones anteriores se conservan en el historial;
+los instrumentos legados se regeneran con IA antes de mostrarlos o compartirlos.
 Los errores de IA muestran una causa y una referencia que se puede encontrar en
 `.run/agents.log`, sin registrar prompts ni claves.
 
-Discover hace grill-me: el agente recorre segmento → situación concreta → proceso
-actual → pain points → evidencia, redacta cada pregunta según la conversación y
-repregunta una vez si la respuesta es vaga. Al cubrir las ramas cierra con el
-problem statement y de 1 a 3 hipótesis falsables. No trabaja Customer Journey.
+Discover hace un grill liviano: como máximo tres preguntas del asistente después
+de la idea inicial, con cierre anticipado si ya alcanza para encuadrar segmento,
+situación y fricción. No agota un cuestionario de ramas ni audita evidencia de
+terceros: las incertidumbres pasan al research y a las hipótesis. Las preguntas
+son abiertas, sin opciones de respuesta ni recomendaciones. Tanto la idea inicial
+como el compositor del chat tienen dictado con micrófono: el reconocimiento de voz
+del navegador escribe texto intermedio en vivo en el mismo campo, editable y sin
+enviarlo automáticamente. Cierra con el
+problem statement y exactamente 3 hipótesis falsables, priorizadas por riesgo e
+incertidumbre. Cada una incluye una encuesta estructurada y una guía de entrevista.
+No trabaja Customer Journey.
 
 ## Interfaz y recorrido
 
 La navegación tiene **Recorrido** (con las tres fases como subopciones) y **Personas**.
 El login y el registro son una página aparte, sin sidebar. Discover empieza con un único
 input centrado; después el cofounder define el problema en un chat junto al mapa
-(sidebar | chat | grafo), sin la barra inferior de IA. Cuando no quedan preguntas,
-**Continuar** confirma el problema y la vista pasa al mapa con la barra de IA abajo.
+(sidebar | chat | grafo), sin la barra inferior de IA. Al terminar las preguntas
+se confirma el planteo y la validación ocupa el lugar
+del chat; la barra de IA queda centrada únicamente dentro del grafo. El problema
+se puede ajustar desde su nota, reabriendo la validación.
 
 Sin SMTP, `/api/agents/register` crea la cuenta en TrailBase y la marca verificada.
 
-1. **Discover** agrupa Discover & Frame Problem y Validate Problem. Idea → seis
-   preguntas → confirmar problema → research → experimento → evidencia → decisión
-   o fork. Entregables: Problem Statement, hipótesis, Evidence Board, experimento
-   y Problem Verdict. Customer Journey es opcional; guía de entrevistas y
-   cuestionario se pueden preparar con IA y editar como borradores.
+1. **Discover** agrupa Discover & Frame Problem y Validate Problem. Idea → grill
+   breve con research exploratorio en paralelo desde la primera aclaración →
+   problema provisional → experimento → evidencia → decisión
+   o fork. Cada hipótesis tiene una encuesta editable con link público `/s/:token`,
+   resultados por versión, una guía de entrevista editable y múltiples entrevistas
+   por persona. El micrófono usa MediaRecorder y el reconocimiento de voz disponible
+   en el navegador; se guarda el texto corregible y el audio se puede descargar
+   localmente. Los instrumentos y respuestas crudas no son nodos. La IA sintetiza
+   hasta tres temas generales por hipótesis con Observación → Insight → Oportunidad
+   (HMW), citando internamente registros de todas las respuestas o de un subconjunto
+   acotado junto con las síntesis previas. Actualiza el mismo tema al llegar nuevas
+   señales, en lugar de crear notas por pregunta o participante. Si no hay un
+   aprendizaje sustentado, no crea ninguna nota. Los veredictos y la insuficiencia
+   de evidencia se comunican aparte, con una frase breve, nunca como insights.
 2. **Explore**: Solution Concept, Value Proposition y Critical Assumptions.
    La matriz de comparación es un entregable adicional.
 3. **Prototype**: diseño de Prototype (Landing, Mago de Oz o Fake Door),
@@ -54,8 +80,18 @@ y versiones, por lo que también forman parte de la memoria buscable. La barra
 de IA consulta el contexto real y recomienda un destino; no declara ejecutar
 acciones que todavía no ocurrieron.
 
-El porcentaje de Discover se calcula en el servidor: problema confirmado 15%, research 20%
-(10% si es parcial), hipótesis 15%, experimento 10%, evidencia 25%, decisión 15%.
+El porcentaje de Discover se calcula en el servidor: problema confirmado 25% y
+cada una de las tres hipótesis validada 25%. La IA evalúa los insights contra el
+criterio previo y devuelve apoyo, contradicción o evidencia insuficiente, con
+justificación e IDs de los registros. El usuario solo puede confirmar **Validar**
+si la evaluación vigente es favorable y cita al menos una encuesta actual y una
+entrevista; para los otros resultados confirma **No validar**. El servidor exige
+la misma evaluación, vinculada a la evidencia actual, y bloquea Explore/Prototype
+hasta validar las tres. Un tick verde grande o una cruz roja marca el resultado
+en lugar del número del checklist y centrado sobre la nota del grafo.
+Editar una encuesta conserva las respuestas anteriores como contexto y exige una
+respuesta de la nueva versión; reformular una hipótesis reabre su validación.
+Nueva evidencia reabre la revisión de la hipótesis correspondiente.
 En Explore y Prototype, cada uno de los tres entregables principales aporta la
 mitad de su peso como borrador y el total al ser aprobado. El avance global es
 el promedio de las tres fases. Representa hitos resueltos, no certeza de éxito.
@@ -85,3 +121,19 @@ seleccionar notas. Las relaciones se agregan desde el detalle de una nota.
 Los endpoints viven en `/api/agents/cruce/`. Las mutaciones llevan una revisión
 del proyecto para detectar clientes desactualizados. El research guarda su estado
 antes de comenzar; si el proceso se reinicia, queda disponible para reintentar.
+El onboarding guarda cada respuesta y su operación antes de llamar a la IA y
+responde HTTP 202. El navegador consulta el estado con un único polling sin
+solapamientos: una desconexión no cancela ni pierde el turno, un reenvío del mismo
+turno es idempotente y un reinicio retoma la operación pendiente. Los errores
+muestran una acción para reintentar la respuesta ya guardada, sin volver a escribirla.
+El research y la síntesis se ejecutan en segundo plano: los GET no esperan llamadas
+al modelo ni retienen el lock de la conversación. Sus resultados se integran con
+la revisión más reciente, conservando las aclaraciones del fundador y el layout.
+La revisión de research no invalida una respuesta a la misma pregunta de onboarding.
+Los endpoints públicos `/api/public/surveys/:token` viven en el WASM: exponen solo
+el cuestionario y aceptan respuestas sin login. El guardado de las respuestas es
+atómico; el mismo reloj de revisión protege las ediciones del propietario de
+escrituras simultáneas. La vista autenticada consulta novedades y sintetiza con IA
+la evidencia pendiente. Solo publica notas cuando hay un insight real o cambia
+uno existente. Si la IA falla, las respuestas quedan guardadas en Resultados y
+la síntesis queda reintentable; no se convierte el registro crudo en una nota.

@@ -23,7 +23,7 @@ export async function readJson(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     size += buffer.length;
-    if (size > 32_768) throw new HttpError(413, 'Request is too large.');
+    if (size > 131_072) throw new HttpError(413, 'Request is too large.');
     chunks.push(buffer);
   }
   try {

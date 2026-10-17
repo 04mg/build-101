@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowRight, Check, LoaderCircle, X } from 'lucide-react'
+import { ArrowRight, LoaderCircle, X } from 'lucide-react'
 import { initialQuestion, statusLabels, type Capabilities, type KnowledgeNote, type Project, type Question } from './types'
 import { sourceContribution } from './sourceContribution'
+import { useVoiceInput } from './useVoiceInput'
+import { VoiceInputButton } from './VoiceInputButton'
 
 interface Props {
   project: Project | null
@@ -64,16 +66,16 @@ export function Journey(props: Props) {
       {hypotheses.map(note => <button key={note.id} className="hypothesis-row" onClick={() => onSelect(note.id)}><span className={`status-dot ${note.status}`} /><span>{note.body}</span><span className="sr-only">{statusLabels[note.status]}</span></button>)}
     </section>
     {doc.confirmed && <div className="panel-actions secondary-actions"><button className="text-button" disabled={Boolean(busy)} onClick={onEvidence}>＋ Agregar evidencia</button><button className="text-button" onClick={() => onSearch(problem?.body ?? '')}>Buscar aprendizajes parecidos <ArrowRight size={12} /></button></div>}
-    <details className="progress-explanation"><summary>Cómo avanza esta fase</summary><p>15% problema · 20% research · 15% hipótesis · 10% experimento · 25% evidencia · 15% decisión.</p><p>Medimos el trabajo resuelto, no la probabilidad de éxito. Una hipótesis contradicha también aporta progreso.</p></details>
   </div>
 }
 
 function QuestionForm({ question, count, busy, onAnswer }: { question: Question; count: number; busy: string; onAnswer: Props['onAnswer'] }) {
-  const [value, setValue] = useState(''), [choice, setChoice] = useState('')
+  const [value, setValue] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const voice = useVoiceInput({ value, onChange: setValue, disabled: Boolean(busy) || submitting, maxLength: 3999 })
   async function submit(event: FormEvent) {
     event.preventDefault()
-    const answer = [choice, value.trim()].filter(Boolean).join('\n')
+    const answer = voice.stop().trim()
     if (!answer || busy || submitting) return
     setSubmitting(true)
     try { await onAnswer(answer, question) } finally { setSubmitting(false) }
@@ -81,12 +83,10 @@ function QuestionForm({ question, count, busy, onAnswer }: { question: Question;
   return <form className="grill-form" onSubmit={event => void submit(event)}>
     <div className="panel-kicker">DISCOVER / DEFINIR EL PROBLEMA <span>Pregunta {count}</span></div>
     <h2>{question.prompt}</h2>
-    <div className="suggestions">{question.options.map(option => <button type="button" key={option.label} aria-pressed={choice === option.label} className={`suggestion ${choice === option.label ? 'chosen' : ''}`} disabled={Boolean(busy)} onClick={() => setChoice(c => c === option.label ? '' : option.label)}>
-      <span>{option.label}</span>{option.recommended && <small>Recomendado{option.reason ? ` · ${option.reason}` : ''}</small>}{choice === option.label && <Check size={14} className="choice-check" />}
-    </button>)}</div>
-    <div className="answer-composer"><textarea aria-label={question.options.length ? 'Tu respuesta o más contexto' : 'Tu idea'} value={value} onChange={event => setValue(event.target.value)} placeholder={question.options.length ? 'O escribí tu respuesta…' : question.placeholder} maxLength={Math.max(0, 3999 - choice.length)} rows={question.options.length ? 3 : 6} disabled={Boolean(busy)} />
-      <div><button className="primary" type="submit" disabled={Boolean(busy) || submitting || (!value.trim() && !choice)}>{busy || submitting ? <><LoaderCircle size={14} className="spin" /> Pensando</> : <>Continuar <ArrowRight size={14} /></>}</button></div>
+    <div className="answer-composer"><textarea aria-label="Tu respuesta" value={value} onChange={event => { voice.stop(); setValue(event.target.value) }} placeholder={voice.listening ? 'Te escucho…' : question.placeholder} maxLength={3999} rows={4} disabled={Boolean(busy)} />
+      <div><VoiceInputButton voice={voice} disabled={Boolean(busy) || submitting} /><button className="primary" type="submit" disabled={Boolean(busy) || submitting || !value.trim()}>{busy || submitting ? <><LoaderCircle size={14} className="spin" /> Pensando</> : <>Continuar <ArrowRight size={14} /></>}</button></div>
     </div>
+    {voice.error && <p className="input-hint error" role="alert">{voice.error}</p>}
     {!count && <p className="input-hint">No hace falta tener la solución.</p>}
   </form>
 }
@@ -130,20 +130,30 @@ export function EvidenceForm({ project, busy, onBack, onSave, hypothesisId }: { 
 
 export function NotePanel({ note, project, busy, onClose, onSelect, onSave, onEvidence }: { note: KnowledgeNote; project: Project; busy: string; onClose: () => void; onSelect: (id: string) => void; onSave: Props['onAction']; onEvidence: (id: string) => void }) {
   const [title, setTitle] = useState(note.title), [body, setBody] = useState(note.body), [target, setTarget] = useState('')
-  const connections = project.document.edges.filter(e => e.source === note.id || e.target === note.id)
+  const [discovery, setDiscovery] = useState(note.discovery)
+  const editedBody = discovery ? `Observación\n${discovery.observation}\n\nInsight\n${discovery.insight}\n\nOportunidad (HMW)\n${discovery.opportunity}` : body
+  const nodes = project.document.nodes, edges = project.document.edges
+  const isSource = (id: string) => nodes.some(n => n.id === id && n.kind === 'source')
+  const sources = note.kind === 'source' ? [] : nodes.filter(n => n.kind === 'source' && edges.some(e => (e.source === n.id && e.target === note.id) || (e.target === n.id && e.source === note.id)))
+  const connections = edges.filter(e => (e.source === note.id || e.target === note.id) && (note.kind === 'source' || !isSource(e.source === note.id ? e.target : e.source)))
   return <div className="journey-panel note-detail"><div className="detail-heading"><span className="panel-kicker">{note.kind === 'source' ? 'Aporte de la fuente' : 'En tu mapa'}</span><button className="icon-button" aria-label="Cerrar nota" onClick={onClose}><X size={16} /></button></div>
     <span className={`note-status ${note.status}`}>{statusLabels[note.status]}</span>
     {note.inheritedFrom && <p className="input-hint">⑂ Contexto heredado del proyecto #{note.inheritedFrom.projectId}. Su alcance original se conserva.</p>}
     {note.kind === 'source' ? <><h2>{note.title}</h2><p className="source-contribution">{sourceContribution(note, project.document.nodes, project.document.edges)}</p>{note.url && <a className="source-link" href={note.url} target="_blank" rel="noreferrer">Abrir fuente ↗</a>}<details className="source-original"><summary>Ver contenido original</summary><p className="source-content">{note.quote || note.body}</p></details><p className="input-hint">Consultada {formatDate(note.updatedAt)}{note.publishedAt ? ` · Publicada ${formatDate(note.publishedAt)}` : ''}</p></> :
-      <form className="editor-form" onSubmit={e => { e.preventDefault(); void onSave({ action: 'note', id: note.id, title, body }) }}><label>Título<input required maxLength={180} value={title} onChange={e => setTitle(e.target.value)} /></label><label>Contenido<textarea required maxLength={4000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label><button disabled={Boolean(busy) || !title.trim() || !body.trim() || (title === note.title && body === note.body)}>Guardar cambios</button></form>}
-    {note.kind === 'hypothesis' && <button className="primary" disabled={Boolean(busy)} onClick={() => onEvidence(note.id)}>Contrastar con evidencia <ArrowRight size={13} /></button>}
+      <form className="editor-form" onSubmit={e => { e.preventDefault(); void onSave({ action: 'note', id: note.id, title, body: editedBody, ...(discovery ? { discovery } : {}) }) }}><label>Título<input required maxLength={180} value={title} onChange={e => setTitle(e.target.value)} /></label>{discovery ? <>{([['observation', 'Observación', 700], ['insight', 'Insight', 700], ['opportunity', 'Oportunidad (HMW)', 450]] as const).map(([key, label, limit]) => <label key={key}>{label}<textarea required minLength={10} maxLength={limit} rows={4} value={discovery[key]} onChange={e => setDiscovery(d => d ? { ...d, [key]: e.target.value } : d)} /></label>)}</> : <label>Contenido<textarea required maxLength={4000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label>}<button disabled={Boolean(busy) || !title.trim() || !editedBody.trim() || (title === note.title && editedBody === note.body)}>Guardar cambios</button></form>}
+    {note.kind === 'hypothesis' && <button className="primary" disabled={Boolean(busy)} onClick={() => onEvidence(note.id)}>Encuesta y entrevistas <ArrowRight size={13} /></button>}
+    {(note.rationale || sources.length > 0) && <section className="note-research"><div className="section-title"><span>{note.rationale ? 'Por qué cambió' : 'Fuentes'}</span><span>{sources.length}</span></div>
+          {note.rationale && <p>{note.rationale}</p>}
+          {sources.map(source => <button key={source.id} className="text-button related-link" onClick={() => onSelect(source.id)}><span><small>{source.url ? hostname(source.url) : 'Fuente'}</small>{source.title}</span><ArrowRight size={12} /></button>)}
+    </section>}
     <section className="related-notes"><div className="section-title">Conexiones</div>{connections.map(edge => {
       const other = project.document.nodes.find(n => n.id === (edge.source === note.id ? edge.target : edge.source))
       return other ? <button className="text-button related-link" key={edge.id} onClick={() => onSelect(other.id)}>{other.title} <ArrowRight size={12} /></button> : null
     })}<div className="connect-note"><select aria-label="Relacionar con otra nota" value={target} onChange={e => setTarget(e.target.value)}><option value="">Relacionar con…</option>{project.document.nodes.filter(n => n.id !== note.id).map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select><button className="icon-button" aria-label="Crear relación" disabled={!target || Boolean(busy)} onClick={() => void onSave({ action: 'relation', source: note.id, target, relation: 'related' }).then(result => { if (result) setTarget('') })}>＋</button></div></section>
     {note.history.length > 0 && <details className="answer-history"><summary>Versiones anteriores · {note.history.length}</summary>{[...note.history].reverse().map((revision, i) => <div key={i}><strong>{formatDate(revision.at)} · {statusLabels[revision.status]}</strong><p>{revision.body}</p></div>)}</details>}
-    <p className="input-hint">{note.origin === 'agent' ? 'Interpretación del agente' : note.origin === 'founder' ? 'Aportado por vos' : note.origin === 'experiment' ? 'Evidencia registrada por vos' : 'Fuente web'} · {formatDate(note.updatedAt)}</p>
   </div>
 }
+
+function hostname(url: string) { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return 'Fuente' } }
 
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('es-UY', { day: 'numeric', month: 'short' }) }

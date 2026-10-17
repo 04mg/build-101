@@ -6,10 +6,20 @@ export interface Session {
 
 const signedOut: Session = { auth_token: null, refresh_token: null, csrf_token: null }
 
-export async function getSession(): Promise<Session> {
+let sessionRequest: Promise<Session> | null = null
+
+export function getSession(): Promise<Session> {
+  // Polling and foreground actions can request headers together. Share only the
+  // in-flight lookup, never cache tokens across login/logout or their expiry.
+  if (!sessionRequest) sessionRequest = loadSession().finally(() => { sessionRequest = null })
+  return sessionRequest
+}
+
+async function loadSession(): Promise<Session> {
   const response = await fetch('/api/auth/v1/status', {
     credentials: 'same-origin',
     cache: 'no-store',
+    signal: AbortSignal.timeout(10000),
   })
   if (response.status === 401 || response.status === 403) return signedOut
   if (!response.ok) throw new Error('No se pudo comprobar la sesión.')

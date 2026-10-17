@@ -12,25 +12,34 @@ import { NewIdea } from '@/features/cruce/NewIdea'
 import { People } from '@/features/cruce/People'
 import { PhaseWorkspace } from '@/features/cruce/PhaseWorkspace'
 import { ProblemChat } from '@/features/cruce/ProblemChat'
+import { PublicSurvey } from '@/features/cruce/PublicSurvey'
 import { ProjectMenu } from '@/features/cruce/ProjectMenu'
 import { Timeline } from '@/features/cruce/Timeline'
 import { artifacts, phasePercent, phases } from '@/features/cruce/phases'
-import { initialQuestion, type AssistantReply, type Capabilities, type DeliverableKey, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
+import { canExplore, initialQuestion, projectBusy, type AssistantReply, type Capabilities, type DeliverableKey, type EditTarget, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
 
 type Page = 'ideation' | 'journey' | 'people' | 'phase'
 
 export default function App() {
+  const publicSurvey = window.location.pathname.match(/^\/s\/([a-zA-Z0-9-]+)\/?$/)
+  return publicSurvey ? <PublicSurvey token={publicSurvey[1]} /> : <WorkspaceApp />
+}
+
+function WorkspaceApp() {
   const [session, setSession] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [projects, setProjects] = useState<ProjectSummary[]>([]), [project, setProject] = useState<Project | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities>({ ai: false, research: false, semanticMemory: false })
   const [page, setPage] = useState<Page>('ideation'), [phase, setPhase] = useState<PhaseId>('discover'), [navOpen, setNavOpen] = useState(true)
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<DiscoverPanel>('journey')
-  const [busy, setBusy] = useState(''), [error, setError] = useState(''), [warning, setWarning] = useState('')
+  const [requestBusy, setBusy] = useState(''), [error, setError] = useState(''), [warning, setWarning] = useState('')
   const [search, setSearch] = useState<string | null>(null)
   const [artifact, setArtifact] = useState<{ key: DeliverableKey; instruction?: string } | null>(null)
+  const [editing, setEditing] = useState<EditTarget[]>([])
   const currentRef = useRef(project), busyRef = useRef(false), loadSequence = useRef(0)
+  const busy = requestBusy || projectBusy(project)
 
   const accept = useCallback((result: Project) => {
+    if (currentRef.current?.id === result.id && currentRef.current.document.activePhase !== 'discover' && result.document.activePhase === 'discover') { setPage('ideation'); setArtifact(null) }
     setProject(result); currentRef.current = result; setPhase(result.document.activePhase ?? 'discover')
     try { sessionStorage.setItem('cruce-project', String(result.id)) } catch { /* Optional navigation preference. */ }
     setProjects(existing => {
@@ -41,9 +50,11 @@ export default function App() {
   }, [])
 
   const initialize = useCallback(async () => {
+    let authenticated = false
     try {
       const result = await getSession()
       if (!result.auth_token) { setSession('signed-out'); return }
+      authenticated = true
       if (window.location.pathname === '/login') {
         const destination = new URLSearchParams(window.location.search).get('redirect_uri')
         if (destination?.startsWith('/_/admin') || destination === '/_/') { window.location.replace('/_/admin/'); return }
@@ -57,7 +68,7 @@ export default function App() {
         const loaded = await getProject(Number(remembered)); accept(loaded)
         setPage(loaded.document.activePhase === 'discover' ? 'ideation' : 'phase')
       }
-    } catch (cause) { setSession('signed-out'); setError(message(cause)) }
+    } catch (cause) { setSession(authenticated ? 'signed-in' : 'signed-out'); setError(message(cause)) }
   }, [accept])
 
   useEffect(() => {
@@ -66,16 +77,31 @@ export default function App() {
     return () => { active = false }
   }, [initialize])
 
-  const projectId = project?.id, researchStatus = project?.document.research.status
+  const projectId = project?.id
+  const processing = Boolean(projectBusy(project) || project?.document.research.status === 'running')
+  // One non-overlapping poll handles onboarding, research and incoming evidence.
+  // It continues after a dropped POST and reconnects to the persisted operation.
   useEffect(() => {
-    if (!projectId || researchStatus !== 'running') return
-    const timer = window.setInterval(() => {
-      void getProject(projectId).then(result => {
-        if (currentRef.current?.id === projectId && result.document.revision >= currentRef.current.document.revision) accept(result)
-      }).catch(() => { /* The foreground request reports errors. */ })
-    }, 2500)
-    return () => clearInterval(timer)
-  }, [projectId, researchStatus, accept])
+    if (!projectId) return
+    let active = true, inFlight = false
+    const refresh = async () => {
+      if (!active || inFlight || busyRef.current || document.visibilityState === 'hidden') return
+      inFlight = true
+      try {
+        const result = await getProject(projectId, AbortSignal.timeout(20000)), current = currentRef.current
+        if (active && !busyRef.current && current?.id === projectId && result.document.revision >= current.document.revision
+          && (result.document.revision > current.document.revision || JSON.stringify(result.activity ?? null) !== JSON.stringify(current.activity ?? null))) {
+          accept(result)
+          if (result.document.intake?.status === 'error') setError(result.document.intake.message)
+        }
+      } catch { /* A network interruption does not cancel the server operation. */ }
+      finally { inFlight = false }
+    }
+    const onFocus = () => { void refresh() }
+    const timer = window.setInterval(onFocus, processing ? 2500 : 8000)
+    window.addEventListener('focus', onFocus)
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', onFocus) }
+  }, [projectId, processing, accept])
 
   async function selectProject(id: string, nodeId?: string) {
     if (busyRef.current) return
@@ -114,21 +140,27 @@ export default function App() {
 
   async function mutate(action: Record<string, unknown>): Promise<Project | null> {
     const active = currentRef.current
-    if (!active || busyRef.current) return null
+    if (!active || busyRef.current || projectBusy(active)) return null
     busyRef.current = true
-    setBusy(action.action === 'answer' || action.action === 'assist' ? 'thinking' : action.action === 'generate-deliverable' ? 'generating' : 'save')
+    setBusy(action.action === 'answer' || action.action === 'assist' ? 'thinking' : action.action === 'assist-apply' ? 'editing' : action.action === 'generate-deliverable' ? 'generating' : 'save')
     setError(''); setWarning('')
     let result: Project | null = null
     try {
       result = await updateProject(active, action); accept(result)
       if (action.action === 'fork') { setSelected(null); setPanel('journey'); setPage('ideation'); setPhase('discover') }
     } catch (cause) {
-      setError(message(cause))
-      if (cause instanceof ApiError && cause.status === 409) {
-        try { accept(await getProject(active.id)) } catch { /* Display original conflict. */ }
+      let recovered = false
+      if (!(cause instanceof ApiError) || [409, 423, 502, 503, 504, 524].includes(cause.status)) {
+        try {
+          const latest = await getProject(active.id); accept(latest)
+          if (action.action === 'answer' && latest.document.intake?.questionId === action.questionId
+            && latest.document.answers.some(a => a.questionId === action.questionId && a.value === action.value)) {
+            result = latest; recovered = true
+          } else if (projectBusy(latest)) recovered = true
+        } catch { /* Keep the draft; the persisted turn can be recovered by polling. */ }
       }
+      if (!recovered) setError(message(cause))
     } finally { busyRef.current = false; setBusy('') }
-    if (result && action.action === 'confirm' && capabilities.research) void runResearch(result.id)
     return result
   }
 
@@ -143,10 +175,16 @@ export default function App() {
 
   async function openPhase(next: PhaseId) {
     if (busyRef.current) return
+    if (project && next !== 'discover' && !canExplore(project)) { setError('Validá las tres hipótesis con al menos una encuesta y una entrevista por hipótesis antes de pasar a Explore.'); return }
+    if (currentRef.current && currentRef.current.document.activePhase !== next && !await mutate({ action: 'phase', phase: next })) return
     setSelected(null); setPanel('journey'); setPhase(next); setPage(next === 'discover' ? 'ideation' : 'phase')
-    if (currentRef.current && currentRef.current.document.activePhase !== next) await mutate({ action: 'phase', phase: next })
   }
-  function openArtifact(key: DeliverableKey, instruction?: string) { if (project && !busyRef.current) setArtifact({ key, instruction }) }
+  function openArtifact(key: DeliverableKey, instruction?: string) {
+    if (!project || busyRef.current) return
+    if (artifacts[key].phase !== 'discover' && !canExplore(project)) { setError('Primero validá las tres hipótesis con encuestas y entrevistas.'); return }
+    if (key === 'interview-guide' || key === 'survey') { void openPhase('discover'); return }
+    setArtifact({ key, instruction })
+  }
   function selectNote(id: string | null) {
     const key = id?.replace(/^deliverable-/, '')
     if (id?.startsWith('deliverable-') && key && key in artifacts) { openArtifact(key as DeliverableKey); return }
@@ -156,6 +194,22 @@ export default function App() {
   async function reference(hit: MemoryHit) {
     const result = await mutate({ action: 'reference', projectId: hit.projectId, nodeId: hit.note.id })
     if (result) { setSearch(null); setPage('ideation'); setPhase('discover'); selectNote(`reference-${hit.projectId}-${hit.note.id}`) }
+  }
+  // On the Discover map the assistant can change notes: it plans first, the canvas
+  // focuses those notes as skeletons, and a second call writes them.
+  async function ask(question: string, onPlan: (reply: AssistantReply) => void) {
+    if (!currentRef.current) return await answer(question, initialQuestion) ? currentRef.current : null
+    const canEdit = page === 'ideation' && phase === 'discover' && currentRef.current.document.confirmed
+    const planned = await mutate({ action: 'assist', question, ...(canEdit ? { edit: true, ...(selected ? { selected } : {}) } : {}) })
+    if (!planned?.edit) return planned
+    const reopen = selected
+    if (planned.assistant) onPlan(planned.assistant)
+    setSelected(null); setPanel('journey'); setEditing(planned.edit.targets)
+    try {
+      const applied = await mutate({ action: 'assist-apply', ...planned.edit })
+      if (reopen && applied?.document.nodes.some(n => n.id === reopen)) { setSelected(reopen); setPanel('note') }
+      return applied
+    } finally { setEditing([]) }
   }
   async function navigateReply(reply: AssistantReply) {
     if (reply.destination === 'timeline') { setPage('journey'); return }
@@ -176,6 +230,8 @@ export default function App() {
   const isBusy = Boolean(busy)
   // Until the problem is defined, Discover is a focused conversation without the global bar.
   const defining = page === 'ideation' && (!project || !project.document.confirmed)
+  const graphWorkspace = page === 'ideation' && project?.document.confirmed
+  const assistantBar = !defining ? <AssistantBar key={project?.id ?? 'new'} history={project?.document.assistant ?? []} phase={phase} busy={busy} disabled={!capabilities.ai || Boolean(artifact) || search !== null} onAsk={ask} onNavigate={reply => void navigateReply(reply)} /> : null
   return <div className="cruce-app">
     <aside className="app-sidebar"><button className="brand-wordmark" aria-label="Cruce, ir al recorrido" onClick={() => setPage('journey')}><Logo /></button>
       <ProjectMenu project={project} projects={projects} disabled={isBusy} onSelect={id => void selectProject(id)} />
@@ -190,9 +246,9 @@ export default function App() {
     </aside>
     <main className="app-main">
       {(error || warning) && <div className={`notice-bar ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}><span>{error || warning}</span><button className="icon-button" aria-label="Cerrar aviso" onClick={() => { setError(''); setWarning('') }}><X size={14} /></button></div>}
-      {page === 'journey' ? <Timeline project={project} busy={isBusy} onPhase={next => void openPhase(next)} onArtifact={openArtifact} onStart={() => { void selectProject('new') }} /> : page === 'people' ? <People onSearch={() => setSearch('')} onJourney={() => setPage('journey')} /> : page === 'phase' ? <PhaseWorkspace phase={phase} project={project} busy={isBusy} onArtifact={openArtifact} onTimeline={() => setPage('journey')} onPhase={next => void openPhase(next)} onStart={() => void selectProject('new')} /> : !project ? <NewIdea busy={busy} onSubmit={value => answer(value, initialQuestion)} /> : !project.document.confirmed ? <ProblemChat project={project} busy={busy} onAnswer={answer} onAction={mutate} /> : <DiscoverWorkspace project={project} capabilities={capabilities} busy={busy} selected={selected} panel={panel} onSelect={selectNote} onPanel={openPanel} onAnswer={answer} onAction={mutate} onResearch={() => void runResearch()} onSearch={setSearch} />}
+      {page === 'journey' ? <Timeline project={project} busy={isBusy} onPhase={next => void openPhase(next)} onArtifact={openArtifact} onStart={() => { void selectProject('new') }} /> : page === 'people' ? <People onSearch={() => setSearch('')} onJourney={() => setPage('journey')} /> : page === 'phase' ? <PhaseWorkspace phase={phase} project={project} busy={isBusy} onArtifact={openArtifact} onTimeline={() => setPage('journey')} onPhase={next => void openPhase(next)} onStart={() => void selectProject('new')} /> : !project ? <NewIdea busy={busy} onSubmit={value => answer(value, initialQuestion)} /> : !project.document.confirmed ? <ProblemChat project={project} busy={busy} onAnswer={answer} onAction={mutate} /> : <DiscoverWorkspace key={project.id} project={project} capabilities={capabilities} busy={busy} selected={selected} panel={panel} onSelect={selectNote} onPanel={openPanel} onAnswer={answer} onAction={async action => { const result = await mutate(action); if (result && action.action === 'phase' && action.phase === 'explore') setPage('phase'); return result }} onResearch={() => void runResearch()} onSearch={setSearch} assistant={assistantBar} editing={editing} />}
     </main>
-    {!defining && <AssistantBar key={project?.id ?? 'new'} history={project?.document.assistant ?? []} phase={phase} busy={busy} disabled={!capabilities.ai || Boolean(artifact) || search !== null} onAsk={async question => { if (currentRef.current) return mutate({ action: 'assist', question }); return await answer(question, initialQuestion) ? currentRef.current : null }} onNavigate={reply => void navigateReply(reply)} />}
+    {!graphWorkspace && assistantBar}
     {artifact && project && <DeliverableEditor key={`${project.id}-${artifact.key}-${artifact.instruction ?? ''}`} artifactKey={artifact.key} initialInstruction={artifact.instruction} project={project} busy={busy} ai={capabilities.ai} onClose={() => setArtifact(null)} onAction={mutate} />}
     {search !== null && <MemorySearch initial={search} projects={projects} currentId={project?.id} busy={isBusy} onClose={() => setSearch(null)} onOpen={(id, nodeId) => { if (!busyRef.current) { setSearch(null); void selectProject(String(id), nodeId) } }} onReference={hit => void reference(hit)} />}
   </div>

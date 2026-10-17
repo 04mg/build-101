@@ -12,6 +12,22 @@ else
 fi
 say() { printf '%s%s%s\n' "$1" "$2" "$RESET"; }
 
+# Usage: ./start.sh [PORT] or ./start.sh --port PORT (default: PORT from env/.env, else 4000).
+# A port given here also moves TrailBase to PORT+1 unless TRAILBASE_PORT is exported.
+while (($#)); do
+  case "$1" in
+    -p|--port) [[ $# -ge 2 ]] || { say "$RED" "✗ $1 needs a value." >&2; exit 1; }; PORT_ARG="$2"; shift 2 ;;
+    --port=*) PORT_ARG="${1#*=}"; shift ;;
+    [0-9]*) PORT_ARG="$1"; shift ;;
+    *) say "$RED" "✗ Unknown argument: $1. Usage: ./start.sh [--port PORT]" >&2; exit 1 ;;
+  esac
+done
+if [[ -n "${PORT_ARG:-}" ]]; then
+  [[ "$PORT_ARG" =~ ^[0-9]+$ ]] && ((PORT_ARG >= 1 && PORT_ARG <= 65534)) || { say "$RED" "✗ Invalid port: $PORT_ARG" >&2; exit 1; }
+  export PORT="$PORT_ARG"
+  export TRAILBASE_PORT="${TRAILBASE_PORT:-$((PORT_ARG + 1))}"
+fi
+
 for tool in node pnpm trail cargo curl flock; do
   command -v "$tool" >/dev/null || { say "$RED" "✗ Missing prerequisite: $tool" >&2; exit 1; }
 done
@@ -78,6 +94,14 @@ fi
 if [[ "$TUNNEL_ENABLED" == 1 ]]; then
   command -v cloudflared >/dev/null || { say "$RED" "✗ Install cloudflared or set ENABLE_TUNNEL=0." >&2; exit 1; }
 fi
+
+# Readiness checks would otherwise pass against whatever already listens there.
+for port in "$APP_PORT" "$TRAIL_PORT"; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    say "$RED" "✗ Port $port is already in use. Stop that process or run ./start.sh --port <free port>." >&2
+    exit 1
+  fi
+done
 
 wait_ready() {
   local url="$1" pid="$2" name="$3" log="$4"

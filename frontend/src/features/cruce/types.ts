@@ -12,10 +12,14 @@ export interface KnowledgeNote {
   origin: 'founder' | 'agent' | 'web' | 'experiment'
   url?: string
   quote?: string
+  /** Why research last rewrote this note; the linked sources justify it. */
+  rationale?: string
   publishedAt?: string
   createdAt: string
   updatedAt: string
   history: { title: string; body: string; status: NoteStatus; at: string }[]
+  archived?: boolean
+  discovery?: { observation: string; insight: string; opportunity: string; evidenceIds: string[] }
   inheritedFrom?: { projectId: number; nodeId: string }
 }
 export interface GraphEdge {
@@ -31,6 +35,45 @@ export interface Question {
   placeholder: string
 }
 export interface Pivot { title: string; problem: string; hypothesis: string; experiment: string }
+export interface SurveyQuestion { id: string; prompt: string; type: 'single' | 'multiple' | 'text' | 'scale'; required: boolean; options: string[] }
+export interface SurveyDraft { title: string; intro: string; questions: SurveyQuestion[] }
+export interface ValidationPlan {
+  hypothesisId: string; hypothesisBody: string; epoch: number; criterion: string; validatedAt: string | null; analyzedKey: string
+  rejectedAt: string | null; assessmentError: string | null
+  instrumentVersion: number; instrumentStatus: 'pending' | 'ready' | 'error'; instrumentError: string | null; insightIds: string[]
+  instrumentHistory: { at: string; criterion: string; survey: SurveyDraft & { version: number }; interview: { intro: string; questions: string[] } }[]
+  assessment: { verdict: 'supports' | 'contradicts' | 'insufficient'; reason: string; evidenceIds: string[]; evidenceKey: string; at: string } | null
+  survey: SurveyDraft & { token: string; version: number; responses: { id: string; at: string; version: number; epoch: number; answers: Record<string, string | string[] | number>; questions: SurveyQuestion[] }[] }
+  interview: { intro: string; questions: string[] }
+  interviews: { id: string; person: string; transcript: string; at: string; epoch: number }[]
+}
+export function validationCounts(plan?: ValidationPlan) {
+  return { surveys: plan?.survey.responses.filter(r => r.epoch === plan.epoch && r.version === plan.survey.version).length ?? 0,
+    interviews: plan?.interviews.filter(r => r.epoch === plan.epoch).length ?? 0 }
+}
+export function hypothesisValidated(project: Project, id: string) {
+  const plan = project.document.validation?.find(p => p.hypothesisId === id), note = project.document.nodes.find(n => n.id === id)
+  const counts = validationCounts(plan)
+  return Boolean(plan?.validatedAt && plan.hypothesisBody === note?.body && note.status === 'supported' && counts.surveys && counts.interviews && currentAssessment(project, plan)?.verdict === 'supports')
+}
+export function validationEvidenceKey(project: Project, plan: ValidationPlan) {
+  const doc = project.document
+  const connected = new Set(doc.edges.filter(e => e.source === plan.hypothesisId || e.target === plan.hypothesisId).flatMap(e => [e.source, e.target]))
+  const insights = doc.nodes.filter(n => !n.archived && connected.has(n.id) && (n.kind === 'insight' || n.kind === 'evidence'))
+    .map(n => `${n.id}:${n.body}`).sort()
+  return `discovery-v3:${plan.epoch}:${plan.survey.version}:${plan.survey.responses.length}:${plan.interviews.length}:${JSON.stringify(insights)}`
+}
+export function currentAssessment(project: Project, plan?: ValidationPlan) {
+  return plan && plan.hypothesisBody === project.document.nodes.find(n => n.id === plan.hypothesisId)?.body && plan.assessment?.evidenceKey === validationEvidenceKey(project, plan) ? plan.assessment : null
+}
+export function hypothesisRejected(project: Project, id: string) {
+  const plan = project.document.validation?.find(p => p.hypothesisId === id), assessment = currentAssessment(project, plan)
+  return Boolean(plan?.rejectedAt && assessment && assessment.verdict !== 'supports')
+}
+export function canExplore(project: Project | null) {
+  const hypotheses = project?.document.nodes.filter(n => n.kind === 'hypothesis') ?? []
+  return Boolean(project?.document.confirmed && hypotheses.length === 3 && hypotheses.every(n => hypothesisValidated(project, n.id)))
+}
 export interface ProjectDocument {
   version: 1
   activePhase: PhaseId
@@ -46,11 +89,21 @@ export interface ProjectDocument {
   pivots: Pivot[]
   parent: { projectId: number; name: string } | null
   assistant?: AssistantTurn[]
+  validation: ValidationPlan[]
+  intake: { status: 'idle' | 'running' | 'error'; id: string | null; questionId: string | null; message: string; startedAt: string | null }
 }
 export interface Point { x: number; y: number }
 export interface AssistantReply { message: string; destination: 'ideation' | 'timeline' | 'people' | 'evidence' | 'research'; phase: PhaseId }
 export interface AssistantTurn extends AssistantReply { question: string; at: string }
-export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply }
+/** A note the assistant is about to change; `at` is where a new note will appear. */
+export interface EditTarget { op: 'update' | 'create' | 'delete' | 'link' | 'unlink'; id: string; at?: Point }
+export interface AssistantEdit { question: string; plan: string; targets: EditTarget[] }
+export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply; edit?: AssistantEdit; activity?: { action: string; startedAt: string } | null }
+export function projectBusy(project: Project | null) {
+  if (project?.document.intake?.status === 'running') return 'thinking'
+  if (project?.activity) return project.activity.action === 'research' ? 'research' : 'thinking'
+  return ''
+}
 export interface ProjectSummary { id: number; name: string; progress: number; phaseProgress?: Record<PhaseId, number>; activePhase?: PhaseId; parent: ProjectDocument['parent'] }
 export interface Capabilities { ai: boolean; research: boolean; semanticMemory: boolean }
 export interface MemoryHit { projectId: number; note: KnowledgeNote; score: number }
