@@ -14,3 +14,10 @@ backend/data/session.db*
 # OS & Temp
 .DS_Store
 *.log
+
+# Local configuration and generated agent service
+.env
+.env.*
+!.env.example
+.run/
+agents/dist/

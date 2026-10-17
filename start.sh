@@ -1,84 +1,129 @@
 #!/usr/bin/env bash
-set -e
+set -Eeuo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
-
-# Ensure PATH includes cargo and local bins
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-echo "=========================================================="
-echo "  🚀 TrailBase Fullstack Starter (Native + WASM + React)"
-echo "=========================================================="
-
-# 1. Cleanup any previous running instances
-pkill -f "trail --depot ./backend run" 2>/dev/null || true
-pkill -f "trail run" 2>/dev/null || true
-pkill -f "cloudflared tunnel --url http://127.0.0.1:4000" 2>/dev/null || true
-sleep 1
-
-# 2. Build frontend if dist/ does not exist
-if [ ! -d "frontend/dist" ]; then
-    echo "📦 Compilando frontend (React + Shadcn UI)..."
-    (cd frontend && pnpm run build)
-fi
-
-# 3. Clean and trap signals for graceful shutdown
-cleanup() {
-    echo -e "\n🛑 Deteniendo TrailBase y Cloudflare Tunnel..."
-    kill "$TRAIL_PID" "$TUNNEL_PID" 2>/dev/null || true
-    pkill -P $$ 2>/dev/null || true
-    exit 0
-}
-trap cleanup SIGINT SIGTERM EXIT
-
-# 4. Iniciar TrailBase nativo
-echo "⚙️  Iniciando TrailBase en http://127.0.0.1:4000..."
-trail --depot ./backend run --address 0.0.0.0:4000 --public-dir ./frontend/dist --spa --dev > /tmp/trailbase.log 2>&1 &
-TRAIL_PID=$!
-
-# Esperar a que TrailBase responda
-for i in {1..20}; do
-    if curl -s http://127.0.0.1:4000/api/ping >/dev/null 2>&1; then
-        break
-    fi
-    sleep 0.5
-done
-
-# 5. Iniciar Cloudflare Tunnel
-echo "🌐 Levantando Cloudflare Tunnel..."
-rm -f /tmp/cloudflared.log
-cloudflared tunnel --url http://127.0.0.1:4000 > /tmp/cloudflared.log 2>&1 &
-TUNNEL_PID=$!
-
-# Esperar a obtener la URL pública
-TUNNEL_URL=""
-for i in {1..30}; do
-    TUNNEL_URL=$(grep -o 'https://[-a-zA-Z0-9.]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
-    if [ -n "$TUNNEL_URL" ]; then
-        break
-    fi
-    sleep 0.5
-done
-
-echo ""
-echo "=========================================================="
-echo "  ✅ SERVICIOS ACTIVOS Y LISTOS"
-echo "=========================================================="
-echo "  💻 Local App:       http://localhost:4000"
-echo "  🛠️  Local Admin:     http://localhost:4000/_/"
-echo "  ⚡ WASM Extension:  http://localhost:4000/api/ping"
-echo "----------------------------------------------------------"
-if [ -n "$TUNNEL_URL" ]; then
-    echo "  🌍 URL Pública:     $TUNNEL_URL"
-    echo "  🔑 Admin Remoto:    $TUNNEL_URL/_/"
-    echo "  📡 API Ping Remota: $TUNNEL_URL/api/ping"
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then
+  BOLD=$'\033[1m'; CYAN=$'\033[36m'; GREEN=$'\033[32m'; DIM=$'\033[2m'; RED=$'\033[31m'; RESET=$'\033[0m'
 else
-    echo "  ⚠️  El túnel está conectando. Revisa: cat /tmp/cloudflared.log"
+  BOLD=''; CYAN=''; GREEN=''; DIM=''; RED=''; RESET=''
 fi
-echo "=========================================================="
-echo "Presiona [Ctrl + C] para detener todos los servicios."
-echo ""
+say() { printf '%s%s%s\n' "$1" "$2" "$RESET"; }
 
-# Mantener activo esperando procesos
-wait "$TRAIL_PID" "$TUNNEL_PID"
+for tool in node pnpm trail cargo curl flock; do
+  command -v "$tool" >/dev/null || { say "$RED" "✗ Missing prerequisite: $tool" >&2; exit 1; }
+done
+node -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)' || { say "$RED" "✗ Node.js 22+ is required." >&2; exit 1; }
+
+mkdir -p .run backend/wasm
+exec 9>.run/start.lock
+flock -n 9 || { say "$RED" "✗ The app is already running. Stop it before starting again." >&2; exit 1; }
+BUILD_LOG="$DIR/.run/build.log"
+
+pids=()
+cleanup() {
+  trap - EXIT INT TERM
+  if ((${#pids[@]})); then
+    echo "Stopping app processes…"
+    kill "${pids[@]}" 2>/dev/null || true
+    # Node drains/aborts streams; force shutdown only after a grace period.
+    for _ in {1..60}; do
+      local running=0
+      for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && running=1; done
+      ((running == 0)) && break
+      sleep 0.1
+    done
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+    wait "${pids[@]}" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+say "$CYAN" "◆ CoFounder  ·  Preparing app…"
+if ! {
+  pnpm --dir agents install --frozen-lockfile &&
+  pnpm --dir frontend install --frozen-lockfile &&
+  pnpm --dir agents run build &&
+  pnpm --dir frontend run build &&
+  cargo build --manifest-path backend/extensions/Cargo.toml --target wasm32-wasip2 --release --locked &&
+  cp backend/extensions/target/wasm32-wasip2/release/trailbase_extensions.wasm backend/wasm/extensions.wasm
+} >"$BUILD_LOG" 2>&1; then
+  say "$RED" "✗ Build failed; see .run/build.log." >&2
+  exit 1
+fi
+
+# Parse .env with Node, not a shell eval. Exported environment variables take priority.
+settings="$(node --env-file-if-exists=.env --input-type=module -e '
+  const { loadConfig } = await import("./agents/dist/config.js");
+  const c = loadConfig();
+  console.log(c.port);
+  console.log(new URL(c.trailbaseUrl).port);
+  console.log(process.env.ENABLE_TUNNEL ?? "1");
+  console.log(process.env.PUBLIC_URL ?? "");
+')"
+mapfile -t settings <<< "$settings"
+APP_PORT="${settings[0]}"
+TRAIL_PORT="${settings[1]}"
+TUNNEL_ENABLED="${settings[2]}"
+PUBLIC_APP_URL="${settings[3]:-}"
+
+if [[ "$TUNNEL_ENABLED" != 0 && "$TUNNEL_ENABLED" != 1 ]]; then
+  say "$RED" "✗ ENABLE_TUNNEL must be 0 or 1." >&2
+  exit 1
+fi
+if [[ "$TUNNEL_ENABLED" == 1 ]]; then
+  command -v cloudflared >/dev/null || { say "$RED" "✗ Install cloudflared or set ENABLE_TUNNEL=0." >&2; exit 1; }
+fi
+
+wait_ready() {
+  local url="$1" pid="$2" name="$3" log="$4"
+  for _ in {1..120}; do
+    kill -0 "$pid" 2>/dev/null || { say "$RED" "✗ $name exited; see $log." >&2; return 1; }
+    if curl --fail --silent --max-time 1 "$url" >/dev/null; then return 0; fi
+    sleep 0.5
+  done
+  say "$RED" "✗ $name did not become ready; see $log." >&2
+  return 1
+}
+
+trail_args=(--depot "$DIR/backend")
+[[ -n "$PUBLIC_APP_URL" ]] && trail_args+=(--public-url "$PUBLIC_APP_URL")
+trail "${trail_args[@]}" run --address "127.0.0.1:$TRAIL_PORT" --public-dir "$DIR/frontend/dist" --spa >.run/trailbase.log 2>&1 9>&- &
+TRAIL_PID=$!
+pids+=("$TRAIL_PID")
+wait_ready "http://127.0.0.1:$TRAIL_PORT/api/ping" "$TRAIL_PID" TrailBase .run/trailbase.log
+
+node --env-file-if-exists=.env agents/dist/server.js >.run/agents.log 2>&1 9>&- &
+NODE_PID=$!
+pids+=("$NODE_PID")
+wait_ready "http://127.0.0.1:$APP_PORT/api/agents/health" "$NODE_PID" Node .run/agents.log
+# Verify forwarding as well as both process health checks.
+curl --fail --silent --max-time 5 "http://127.0.0.1:$APP_PORT/api/ping" >/dev/null
+
+printf '\n%s◆ CoFounder%s\n\n' "$BOLD$CYAN" "$RESET"
+say "$GREEN" "✓ App   http://localhost:$APP_PORT"
+
+if [[ "$TUNNEL_ENABLED" == 1 ]]; then
+  cloudflared tunnel --url "http://127.0.0.1:$APP_PORT" >.run/cloudflared.log 2>&1 9>&- &
+  TUNNEL_PID=$!
+  pids+=("$TUNNEL_PID")
+  for _ in {1..40}; do
+    kill -0 "$TUNNEL_PID" 2>/dev/null || { say "$RED" "✗ Tunnel exited; see .run/cloudflared.log." >&2; exit 1; }
+    TUNNEL_URL="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; console.log(readFileSync(".run/cloudflared.log", "utf8").match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)?.[0] ?? "")')"
+    if [[ -n "$TUNNEL_URL" ]]; then say "$CYAN" "↗ Public $TUNNEL_URL"; break; fi
+    sleep 0.5
+  done
+  [[ -n "$TUNNEL_URL" ]] || say "$DIM" "↗ Tunnel is connecting…"
+fi
+
+printf '\n%sPress Ctrl+C to stop.%s\n\n' "$DIM" "$RESET"
+set +e
+wait -n "${pids[@]}"
+status=$?
+set -e
+say "$RED" "✗ An app process exited (status $status); check .run/ logs." >&2
+exit 1
