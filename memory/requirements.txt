@@ -1,0 +1,3 @@
+graphiti-core[falkordb]==0.29.3
+openai>=1.91,<2
+httpx>=0.27,<1

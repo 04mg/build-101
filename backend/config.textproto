@@ -3,7 +3,7 @@
 # Schema: https://github.com/trailbaseio/trailbase/blob/main/crates/core/proto/config.proto
 email {}
 server {
-  application_name: "TrailBase Booking Hub"
+  application_name: "cruce"
   logs_retention_sec: 604800
 }
 auth {
@@ -21,4 +21,17 @@ record_apis: [{
   table_name: "bookings"
   acl_world: [READ, CREATE, UPDATE, DELETE]
   acl_authenticated: [READ, CREATE, UPDATE, DELETE]
+}, {
+  name: "cruce_projects"
+  table_name: "cruce_projects"
+  acl_authenticated: [READ, CREATE, UPDATE, DELETE]
+  create_access_rule: "_REQ_.owner = _USER_.id"
+  read_access_rule: "_ROW_.owner = _USER_.id"
+  update_access_rule: "_ROW_.owner = _USER_.id AND (_REQ_.owner IS NULL OR _REQ_.owner = _USER_.id)"
+  delete_access_rule: "_ROW_.owner = _USER_.id"
+}, {
+  name: "cruce_knowledge"
+  table_name: "cruce_knowledge"
+  acl_authenticated: [READ]
+  read_access_rule: "EXISTS(SELECT 1 FROM cruce_projects p WHERE p.id = _ROW_.project_id AND p.owner = _USER_.id)"
 }]

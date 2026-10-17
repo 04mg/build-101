@@ -1,24 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import { pipeUIMessageStreamToResponse, toUIMessageStream } from 'ai';
-import { z } from 'zod';
 import type { Config } from './config.js';
-import { authenticate } from './auth.js';
-import { createAssistantAgent } from './agents/assistant.js';
 import { HttpError, json, readJson } from './http.js';
-
-const chatRequest = z.object({
-  messages: z.array(z.object({
-    role: z.enum(['user', 'assistant']),
-    parts: z.array(z.object({
-      type: z.literal('text'),
-      text: z.string().max(4000),
-    })).min(1).max(4),
-  })).min(1).max(20),
-});
+import { createCruceRoutes } from './cruce/routes.js';
+import { register } from './register.js';
+import { stopClaudeRuns } from './cruce/claude.js';
 
 export function createApp(config: Config) {
-  const agent = createAssistantAgent(config);
+  const handleCruce = createCruceRoutes(config);
   // One public origin; do not consume or rewrite proxied auth/record request bodies.
   const proxy = createProxyMiddleware<IncomingMessage, ServerResponse>({
     target: config.trailbaseUrl,
@@ -33,11 +22,6 @@ export function createApp(config: Config) {
       },
     },
   });
-
-  // Bound concurrency independently of the number of agent definitions/users.
-  let activeRuns = 0;
-  const usersRunning = new Set<string>();
-  const abortControllers = new Set<AbortController>();
 
   async function handle(request: IncomingMessage, response: ServerResponse) {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -57,67 +41,25 @@ export function createApp(config: Config) {
       return;
     }
     if (pathname === '/api/agents/health' && request.method === 'GET') {
-      json(response, 200, { status: 'ok', configured: Boolean(config.apiKey) });
+      json(response, 200, { status: 'ok', configured: config.ai });
       return;
     }
     if (!pathname.startsWith('/api/agents/') && pathname !== '/api/agents') {
       // The former model endpoint is deliberately retired, including stale WASM builds.
       if (pathname === '/api/chat') {
-        json(response, 410, { error: 'Use the authenticated /api/agents/chat endpoint.' });
+        json(response, 410, { error: 'This endpoint was retired.' });
         return;
       }
       await proxy(request, response);
       return;
     }
-    if (pathname !== '/api/agents/chat') throw new HttpError(404, 'Unknown agent endpoint.');
-    if (request.method !== 'POST') {
-      response.setHeader('Allow', 'POST');
-      throw new HttpError(405, 'Use POST.');
+    if (pathname === '/api/agents/register' && request.method === 'POST') {
+      await register(await readJson(request), config.trailbaseUrl);
+      json(response, 201, { ok: true });
+      return;
     }
-
-    const user = await authenticate(request, config.trailbaseUrl);
-    const parsed = chatRequest.safeParse(await readJson(request));
-    if (!parsed.success) throw new HttpError(400, 'Send 1–20 text-only user/assistant messages (up to 4000 characters per part).');
-    const latest = parsed.data.messages.at(-1)!;
-    if (latest.role !== 'user' || !latest.parts.some(part => part.text.trim())) {
-      throw new HttpError(400, 'The final message must be a nonempty user message.');
-    }
-    if (!config.apiKey) throw new HttpError(503, 'Set AI_API_KEY in the root .env to enable the agent.');
-    if (activeRuns >= 4 || usersRunning.has(user.sub)) {
-      throw new HttpError(429, 'An agent is already busy. Please try again shortly.');
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000);
-    const disconnect = () => { if (!response.writableFinished) controller.abort(); };
-    response.on('close', disconnect);
-    abortControllers.add(controller);
-    activeRuns++;
-    usersRunning.add(user.sub);
-    try {
-      const result = await agent.stream({
-        messages: parsed.data.messages.map(message => ({
-          role: message.role,
-          content: message.parts.map(part => part.text).join('\n'),
-        })),
-        abortSignal: controller.signal,
-      });
-      await pipeUIMessageStreamToResponse({
-        response,
-        headers: { 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' },
-        stream: toUIMessageStream({
-          stream: result.stream,
-          sendReasoning: false,
-          onError: () => 'The model could not finish its response. Check the provider configuration and try again.',
-        }),
-      });
-    } finally {
-      clearTimeout(timeout);
-      response.off('close', disconnect);
-      abortControllers.delete(controller);
-      activeRuns--;
-      usersRunning.delete(user.sub);
-    }
+    if (await handleCruce(request, response, pathname)) return;
+    throw new HttpError(404, 'Unknown agent endpoint.');
   }
 
   const server = createServer((request, response) => {
@@ -131,6 +73,6 @@ export function createApp(config: Config) {
       });
     });
   });
-  server.on('close', () => { for (const controller of abortControllers) controller.abort(); });
-  return { server, abortRuns: () => { for (const controller of abortControllers) controller.abort(); } };
+  server.on('close', stopClaudeRuns);
+  return { server, abortRuns: stopClaudeRuns };
 }

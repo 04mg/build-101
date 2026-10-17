@@ -32,6 +32,18 @@ export async function signIn(identifier: string, password: string): Promise<void
   if (!(await getSession()).auth_token) throw new Error('No se pudo guardar la sesión. Vuelve a iniciar sesión.')
 }
 
+export async function register(email: string, password: string): Promise<void> {
+  const response = await fetch('/api/agents/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim(), password }),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? 'No se pudo crear la cuenta.')
+  }
+}
+
 export async function signOut(): Promise<void> {
   const response = await fetch('/api/auth/v1/logout?redirect_uri=/', { credentials: 'same-origin' })
   if (!response.ok) throw new Error('No se pudo cerrar la sesión.')
