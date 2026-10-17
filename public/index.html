@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TrailBase Booking Hub | Prototipo Rápido</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #f3f4f6; }
+    .glass-card { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glass-card:hover { border-color: rgba(99, 102, 241, 0.3); }
+    .glow-accent { box-shadow: 0 0 30px -5px rgba(99, 102, 241, 0.25); }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-40 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+          <i data-lucide="calendar-check" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">
+            TrailBase Bookings
+          </span>
+          <span class="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 border border-indigo-700/50 text-indigo-300 font-medium">v0.34 API</span>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <!-- API Status Indicator -->
+        <div id="backendStatus" class="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium bg-emerald-950/60 border border-emerald-800/50 text-emerald-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>TrailBase Online</span>
+        </div>
+
+        <button onclick="switchTab('admin')" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition flex items-center space-x-1.5">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-indigo-400"></i>
+          <span>Panel de Reservas</span>
+          <span id="bookingBadgeCount" class="ml-1 bg-indigo-600 text-white text-[10px] px-1.5 py-0.2 rounded-full">0</span>
+        </button>
+
+        <a href="/_/admin" target="_blank" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 hover:border-indigo-600 transition flex items-center space-x-1.5">
+          <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+          <span>Admin DB</span>
+          <i data-lucide="external-link" class="w-3 h-3 opacity-70"></i>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+
+    <!-- Hero / Navigation Tabs -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+          Sistema de Reservas en Tiempo Real
+        </h1>
+        <p class="text-gray-400 text-sm mt-1">
+          Prototipo de alta velocidad conectado a 
+          <a href="https://trailbase.io" target="_blank" class="text-indigo-400 hover:underline inline-flex items-center font-medium">
+            trailbase.io
+            <i data-lucide="external-link" class="w-3 h-3 ml-1"></i>
+          </a> 
+          (SQLite STRICT + Record APIs).
+        </p>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div class="flex p-1 bg-gray-900 border border-gray-800 rounded-xl">
+        <button id="tabBtnCatalog" onclick="switchTab('catalog')" class="flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition bg-indigo-600 text-white shadow-sm">
+          <i data-lucide="layout-grid" class="w-4 h-4"></i>
+          <span>Servicios Disponibles</span>
+        </button>
+        <button id="tabBtnAdmin" onclick="switchTab('admin')" class="flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-white">
+          <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+          <span>Gestión & Admin</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB 1: CATALOG VIEW -->
+    <section id="catalogView">
+      <!-- Filter Bar -->
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div class="flex items-center space-x-2 overflow-x-auto pb-1" id="categoryFilters">
+          <button onclick="filterCategory('All')" class="filter-chip px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40">
+            Todos los servicios
+          </button>
+          <button onclick="filterCategory('Deportes')" class="filter-chip px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-gray-400 border border-gray-800 hover:text-white">
+            🎾 Deportes
+          </button>
+          <button onclick="filterCategory('Espacios')" class="filter-chip px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-gray-400 border border-gray-800 hover:text-white">
+            🏢 Espacios
+          </button>
+          <button onclick="filterCategory('Gastronomía')" class="filter-chip px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-gray-400 border border-gray-800 hover:text-white">
+            🍷 Gastronomía
+          </button>
+          <button onclick="filterCategory('Negocios')" class="filter-chip px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-gray-400 border border-gray-800 hover:text-white">
+            💼 Negocios
+          </button>
+        </div>
+
+        <div class="text-xs text-gray-400">
+          <span id="serviceCount">Cargando servicios...</span>
+        </div>
+      </div>
+
+      <!-- Services Grid -->
+      <div id="servicesGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <!-- Rendered via JS -->
+      </div>
+    </section>
+
+    <!-- TAB 2: ADMIN & BOOKINGS VIEW -->
+    <section id="adminView" class="hidden">
+      <!-- Stats Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div class="glass-card p-5 rounded-2xl">
+          <div class="flex items-center justify-between text-gray-400">
+            <span class="text-xs font-medium uppercase tracking-wider">Reservas Totales</span>
+            <i data-lucide="calendar" class="w-4 h-4 text-indigo-400"></i>
+          </div>
+          <div class="text-3xl font-extrabold text-white mt-2" id="statTotalBookings">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">Sincronizadas con SQLite DB</p>
+        </div>
+
+        <div class="glass-card p-5 rounded-2xl">
+          <div class="flex items-center justify-between text-gray-400">
+            <span class="text-xs font-medium uppercase tracking-wider">Estado Confirmadas</span>
+            <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+          </div>
+          <div class="text-3xl font-extrabold text-emerald-400 mt-2" id="statConfirmedBookings">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">100% validadas</p>
+        </div>
+
+        <div class="glass-card p-5 rounded-2xl">
+          <div class="flex items-center justify-between text-gray-400">
+            <span class="text-xs font-medium uppercase tracking-wider">Endpoint TrailBase</span>
+            <i data-lucide="database" class="w-4 h-4 text-indigo-400"></i>
+          </div>
+          <div class="text-sm font-mono font-semibold text-indigo-300 mt-3 truncate">/api/records/v1/bookings</div>
+          <p class="text-[11px] text-gray-500 mt-1">CRUD REST nativo</p>
+        </div>
+      </div>
+
+      <!-- Table Section -->
+      <div class="glass-card rounded-2xl overflow-hidden border border-gray-800">
+        <div class="p-4 sm:p-5 border-b border-gray-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base font-bold text-white">Listado de Reservas Registradas</h2>
+            <p class="text-xs text-gray-400">Gestión directa de registros en tiempo real en TrailBase</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="loadBookings()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition flex items-center space-x-1.5">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+              <span>Refrescar</span>
+            </button>
+            <button onclick="createMockBooking()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1.5">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+              <span>+ Reserva Rápida</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-gray-300">
+            <thead class="text-xs uppercase bg-gray-900/70 text-gray-400 border-b border-gray-800">
+              <tr>
+                <th class="px-4 py-3">ID</th>
+                <th class="px-4 py-3">Servicio</th>
+                <th class="px-4 py-3">Cliente</th>
+                <th class="px-4 py-3">Fecha y Hora</th>
+                <th class="px-4 py-3">Invitados</th>
+                <th class="px-4 py-3">Estado</th>
+                <th class="px-4 py-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="bookingsTableBody" class="divide-y divide-gray-800/60">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+        <div id="noBookingsMsg" class="hidden p-8 text-center text-gray-500 text-sm">
+          No hay reservas registradas aún. ¡Sé el primero en reservar o pulsa "+ Reserva Rápida"!
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- BOOKING MODAL -->
+  <div id="bookingModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm hidden">
+    <div class="glass-card bg-gray-900 border border-gray-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-150">
+      <div class="p-5 border-b border-gray-800 flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+            <i data-lucide="calendar-plus" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-white" id="modalServiceTitle">Nueva Reserva</h3>
+            <p class="text-xs text-gray-400" id="modalServiceSubtitle">Completa los datos de confirmación</p>
+          </div>
+        </div>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="bookingForm" onsubmit="handleBookingSubmit(event)" class="p-5 space-y-4">
+        <input type="hidden" id="formServiceId" name="service_id" />
+        <input type="hidden" id="formServiceName" name="service_name" />
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Nombre Completo *</label>
+            <input type="text" id="formCustomerName" required placeholder="Ej: María Fernández"
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Correo Electrónico *</label>
+            <input type="email" id="formCustomerEmail" required placeholder="maria@ejemplo.com"
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Teléfono</label>
+            <input type="tel" id="formCustomerPhone" placeholder="+34 612 345 678"
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Fecha *</label>
+            <input type="date" id="formBookingDate" required
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Horario *</label>
+            <select id="formBookingTime" required
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500">
+              <option value="09:00">09:00 hrs</option>
+              <option value="10:30">10:30 hrs</option>
+              <option value="12:00">12:00 hrs</option>
+              <option value="14:00">14:00 hrs</option>
+              <option value="16:30">16:30 hrs</option>
+              <option value="18:00" selected>18:00 hrs</option>
+              <option value="19:30">19:30 hrs</option>
+              <option value="21:00">21:00 hrs</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Nº de Asistentes / Personas</label>
+            <input type="number" id="formGuests" min="1" max="50" value="2"
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">Notas especiales</label>
+            <input type="text" id="formNotes" placeholder="Peticiones, requerimientos..."
+              class="w-full px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-gray-800 flex items-center justify-end space-x-3">
+          <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-gray-300 hover:bg-gray-800 transition">
+            Cancelar
+          </button>
+          <button type="submit" id="submitBookingBtn" class="px-5 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition flex items-center space-x-1.5">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>Confirmar Reserva</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER (Moved to bottom-left to avoid overlap) -->
+  <div id="toastContainer" class="fixed bottom-5 left-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <!-- FLOATING AI ASSISTANT TRIGGER -->
+  <button id="aiToggleBtn" onclick="toggleAiDrawer()" class="fixed bottom-6 right-6 z-40 px-4 py-3 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white font-semibold text-xs shadow-xl shadow-indigo-600/40 hover:scale-105 active:scale-95 transition flex items-center space-x-2 border border-indigo-400/40 group">
+    <span class="relative flex h-2.5 w-2.5">
+      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-300 opacity-75"></span>
+      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
+    </span>
+    <i data-lucide="sparkles" class="w-4 h-4 text-indigo-200 group-hover:rotate-12 transition"></i>
+    <span>Asistente AI</span>
+  </button>
+
+  <!-- AI ASSISTANT CHAT DRAWER -->
+  <div id="aiDrawer" class="fixed bottom-20 right-4 sm:right-6 w-[94vw] sm:w-[420px] h-[550px] max-h-[82vh] z-50 glass-card bg-gray-950/95 border border-indigo-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden hidden transition-all duration-200">
+    <!-- Header -->
+    <div class="p-3.5 border-b border-gray-800 bg-gray-900/90 flex items-center justify-between">
+      <div class="flex items-center space-x-2.5">
+        <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/30">
+          <i data-lucide="bot" class="w-4 h-4"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-1.5">
+            <h4 class="text-xs font-bold text-white">Asistente de Reservas</h4>
+            <span class="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-950 border border-amber-700/60 text-amber-300 font-mono">Rust-WASM</span>
+          </div>
+          <p class="text-[10px] text-gray-400 font-mono">liquid/lfm-2.5-2.6b:free</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-1">
+        <button onclick="clearAiChat()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Limpiar chat">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        </button>
+        <button onclick="toggleAiDrawer()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Cerrar">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Message Area -->
+    <div id="aiMessagesContainer" class="flex-1 overflow-y-auto p-4 space-y-3 text-xs leading-relaxed">
+      <!-- Default Welcome Message -->
+      <div class="flex items-start space-x-2">
+        <div class="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30 mt-0.5">
+          <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl rounded-tl-none p-3 text-gray-200 max-w-[88%] space-y-1.5">
+          <p>¡Hola! 👋 Soy tu asistente inteligente conectado al endpoint backend con <strong>LiquidAI LFM 2.5</strong>.</p>
+          <p class="text-gray-400 text-[11px]">Puedo recomendarte espacios, canchas de pádel, salas o consultorías según lo que necesites.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Suggestion Chips -->
+    <div class="px-3 py-2 bg-gray-900/60 border-t border-gray-800/80 overflow-x-auto flex items-center space-x-1.5">
+      <button onclick="sendQuickPrompt('¿Qué servicios tienen disponibles y sus precios?')" class="whitespace-nowrap px-2.5 py-1 rounded-full bg-gray-800/90 hover:bg-indigo-600/40 text-gray-300 hover:text-indigo-200 text-[11px] border border-gray-700/50 transition">
+        📋 Servicios & Precios
+      </button>
+      <button onclick="sendQuickPrompt('Quiero reservar una cancha de pádel')" class="whitespace-nowrap px-2.5 py-1 rounded-full bg-gray-800/90 hover:bg-indigo-600/40 text-gray-300 hover:text-indigo-200 text-[11px] border border-gray-700/50 transition">
+        🎾 Cancha de pádel
+      </button>
+      <button onclick="sendQuickPrompt('¿Cuál es la opción más barata?')" class="whitespace-nowrap px-2.5 py-1 rounded-full bg-gray-800/90 hover:bg-indigo-600/40 text-gray-300 hover:text-indigo-200 text-[11px] border border-gray-700/50 transition">
+        💰 Más barata
+      </button>
+    </div>
+
+    <!-- Input Form -->
+    <form id="aiChatForm" onsubmit="handleAiSubmit(event)" class="p-3 border-t border-gray-800 bg-gray-900/90 flex items-center space-x-2">
+      <input type="text" id="aiInput" placeholder="Pregunta al asistente sobre servicios..." autocomplete="off" required
+        class="flex-1 px-3 py-2 bg-gray-950 border border-gray-800 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500" />
+      <button type="submit" id="aiSendBtn" class="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50">
+        <i data-lucide="send" class="w-4 h-4"></i>
+      </button>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <footer class="border-t border-gray-900 bg-gray-950/60 py-4 mt-auto text-center text-xs text-gray-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div class="flex items-center space-x-2">
+        <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+        <span>100% Nativo <strong>TrailBase</strong> + Componente Rust-WASM</span>
+      </div>
+      <div>
+        REST: <code class="text-indigo-400">/api/records/v1/*</code> | WASM: <code class="text-amber-400">POST /api/chat</code>
+      </div>
+    </div>
+  </footer>
+
+  <!-- App Logic -->
+  <script>
+    // State
+    let allServices = [];
+    let currentFilter = 'All';
+    let allBookings = [];
+
+    // Base API URL (always matches current host/domain, whether localhost or Cloudflare Tunnel)
+    const API_BASE = `${window.location.origin}/api/records/v1`;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      // Set default date to tomorrow
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      document.getElementById('formBookingDate').value = tomorrow.toISOString().split('T')[0];
+      document.getElementById('formBookingDate').min = new Date().toISOString().split('T')[0];
+
+      loadServices();
+      loadBookings();
+    });
+
+    // Toast alert
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      const isSuccess = type === 'success';
+      toast.className = `pointer-events-auto flex items-center space-x-2 px-4 py-3 rounded-xl shadow-xl text-sm font-medium border backdrop-blur-md transition-all duration-300 transform translate-y-2 opacity-0 ${
+        isSuccess 
+          ? 'bg-emerald-950/90 text-emerald-200 border-emerald-800' 
+          : 'bg-rose-950/90 text-rose-200 border-rose-800'
+      }`;
+      toast.innerHTML = `
+        <i data-lucide="${isSuccess ? 'check-circle' : 'alert-circle'}" class="w-4 h-4"></i>
+        <span>${message}</span>
+      `;
+      container.appendChild(toast);
+      lucide.createIcons();
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // Switch Tabs
+    function switchTab(tab) {
+      const catalogView = document.getElementById('catalogView');
+      const adminView = document.getElementById('adminView');
+      const tabBtnCatalog = document.getElementById('tabBtnCatalog');
+      const tabBtnAdmin = document.getElementById('tabBtnAdmin');
+
+      if (tab === 'catalog') {
+        catalogView.classList.remove('hidden');
+        adminView.classList.add('hidden');
+        tabBtnCatalog.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition bg-indigo-600 text-white shadow-sm';
+        tabBtnAdmin.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-white';
+      } else {
+        catalogView.classList.add('hidden');
+        adminView.classList.remove('hidden');
+        tabBtnAdmin.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition bg-indigo-600 text-white shadow-sm';
+        tabBtnCatalog.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition text-gray-400 hover:text-white';
+        loadBookings();
+      }
+      lucide.createIcons();
+    }
+
+    // Load Services from TrailBase Record API
+    async function loadServices() {
+      try {
+        const res = await fetch(`${API_BASE}/services`);
+        if (!res.ok) throw new Error('Error al conectar con TrailBase');
+        const data = await res.json();
+        allServices = data.records || [];
+        document.getElementById('backendStatus').innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>TrailBase Online</span>
+        `;
+        renderServices();
+      } catch (err) {
+        console.error('Error fetching services:', err);
+        const statusEl = document.getElementById('backendStatus');
+        if (statusEl) {
+          statusEl.className = 'flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium bg-rose-950/60 border border-rose-800/50 text-rose-400';
+          statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span><span>Desconectado</span>';
+        }
+        document.getElementById('servicesGrid').innerHTML = `
+          <div class="col-span-full p-6 text-center glass-card rounded-2xl border-rose-900/50">
+            <p class="text-rose-400 font-semibold mb-2">No se pudo conectar con el backend de TrailBase</p>
+            <p class="text-xs text-gray-400 mb-4">Error al consultar ${API_BASE}</p>
+            <button onclick="loadServices()" class="px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg">Reintentar</button>
+          </div>
+        `;
+      }
+    }
+
+    // Render Services
+    function renderServices() {
+      const grid = document.getElementById('servicesGrid');
+      const countEl = document.getElementById('serviceCount');
+      
+      const filtered = currentFilter === 'All'
+        ? allServices
+        : allServices.filter(s => s.category.toLowerCase() === currentFilter.toLowerCase());
+
+      countEl.textContent = `${filtered.length} servicios disponibles`;
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div class="col-span-full text-center text-gray-500 py-12">No hay servicios en esta categoría.</div>`;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(service => `
+        <div class="glass-card rounded-2xl overflow-hidden flex flex-col group transition duration-300 hover:-translate-y-1">
+          <div class="relative h-44 w-full overflow-hidden bg-gray-900">
+            <img src="${service.image_url}" alt="${service.name}" class="w-full h-full object-cover transition duration-500 group-hover:scale-105" />
+            <div class="absolute inset-0 bg-gradient-to-t from-gray-950 via-transparent to-transparent opacity-80"></div>
+            <span class="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-gray-900/80 backdrop-blur-md text-indigo-300 border border-gray-700">
+              ${service.category}
+            </span>
+            <div class="absolute bottom-3 left-3 flex items-center space-x-2 text-xs text-gray-300">
+              <span class="flex items-center space-x-1 bg-gray-950/60 px-2 py-0.5 rounded backdrop-blur-sm">
+                <i data-lucide="clock" class="w-3 h-3 text-indigo-400"></i>
+                <span>${service.duration_min} min</span>
+              </span>
+            </div>
+          </div>
+          <div class="p-4 flex-1 flex flex-col justify-between">
+            <div>
+              <h3 class="font-bold text-base text-white group-hover:text-indigo-300 transition">${service.name}</h3>
+              <p class="text-xs text-gray-400 mt-1.5 line-clamp-2">${service.description}</p>
+            </div>
+            <div class="mt-4 pt-3 border-t border-gray-800/80 flex items-center justify-between">
+              <div>
+                <span class="text-xs text-gray-500 block leading-none">Precio</span>
+                <span class="text-lg font-extrabold text-white">$${service.price}</span>
+              </div>
+              <button onclick="openBookingModal(${service.id}, '${service.name.replace(/'/g, "\\'")}')" 
+                class="px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1 shadow-md shadow-indigo-600/20">
+                <span>Reservar</span>
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    function filterCategory(cat) {
+      currentFilter = cat;
+      renderServices();
+    }
+
+    // Modal Control
+    function openBookingModal(serviceId, serviceName) {
+      document.getElementById('formServiceId').value = serviceId;
+      document.getElementById('formServiceName').value = serviceName;
+      document.getElementById('modalServiceTitle').textContent = `Reservar: ${serviceName}`;
+      document.getElementById('modalServiceSubtitle').textContent = 'Confirmación directa en TrailBase backend';
+      document.getElementById('bookingModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeModal() {
+      document.getElementById('bookingModal').classList.add('hidden');
+      document.getElementById('bookingForm').reset();
+    }
+
+    // Submit Booking to TrailBase
+    async function handleBookingSubmit(e) {
+      e.preventDefault();
+      const submitBtn = document.getElementById('submitBookingBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>Guardando...</span>`;
+      lucide.createIcons();
+
+      const bookingData = {
+        service_id: parseInt(document.getElementById('formServiceId').value),
+        service_name: document.getElementById('formServiceName').value,
+        customer_name: document.getElementById('formCustomerName').value,
+        customer_email: document.getElementById('formCustomerEmail').value,
+        customer_phone: document.getElementById('formCustomerPhone').value || 'Sin teléfono',
+        booking_date: document.getElementById('formBookingDate').value,
+        booking_time: document.getElementById('formBookingTime').value,
+        guests: parseInt(document.getElementById('formGuests').value) || 1,
+        status: 'CONFIRMED',
+        notes: document.getElementById('formNotes').value || '',
+        created_at: new Date().toISOString()
+      };
+
+      try {
+        const res = await fetch(`${API_BASE}/bookings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bookingData)
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        const result = await res.json();
+        
+        closeModal();
+        showToast(`¡Reserva confirmada con éxito! Ref: #${result.ids?.[0] || 'OK'}`);
+        loadBookings();
+      } catch (err) {
+        console.error('Error creating booking:', err);
+        showToast(`Error al guardar: ${err.message}`, 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i><span>Confirmar Reserva</span>`;
+        lucide.createIcons();
+      }
+    }
+
+    // Load Bookings from TrailBase
+    async function loadBookings() {
+      try {
+        const res = await fetch(`${API_BASE}/bookings`);
+        if (!res.ok) throw new Error('Error al consultar reservas');
+        const data = await res.json();
+        allBookings = data.records || [];
+        renderBookings();
+      } catch (err) {
+        console.error('Error loading bookings:', err);
+      }
+    }
+
+    // Render Bookings Table
+    function renderBookings() {
+      const tbody = document.getElementById('bookingsTableBody');
+      const noMsg = document.getElementById('noBookingsMsg');
+      const badge = document.getElementById('bookingBadgeCount');
+      const statTotal = document.getElementById('statTotalBookings');
+      const statConfirmed = document.getElementById('statConfirmedBookings');
+
+      badge.textContent = allBookings.length;
+      statTotal.textContent = allBookings.length;
+      statConfirmed.textContent = allBookings.filter(b => b.status === 'CONFIRMED').length;
+
+      if (allBookings.length === 0) {
+        tbody.innerHTML = '';
+        noMsg.classList.remove('hidden');
+        return;
+      }
+
+      noMsg.classList.add('hidden');
+      tbody.innerHTML = allBookings.map(b => `
+        <tr class="hover:bg-gray-800/40 transition">
+          <td class="px-4 py-3 font-mono text-xs text-indigo-400 font-bold">#${b.id}</td>
+          <td class="px-4 py-3 font-semibold text-white">
+            ${b.service_name}
+            ${b.notes ? `<div class="text-[11px] text-gray-500 font-normal truncate max-w-xs">${b.notes}</div>` : ''}
+          </td>
+          <td class="px-4 py-3">
+            <div class="font-medium text-gray-200">${b.customer_name}</div>
+            <div class="text-[11px] text-gray-500">${b.customer_email} • ${b.customer_phone}</div>
+          </td>
+          <td class="px-4 py-3 text-xs">
+            <div class="font-medium text-white">${b.booking_date}</div>
+            <div class="text-indigo-400">${b.booking_time} hrs</div>
+          </td>
+          <td class="px-4 py-3 text-center">
+            <span class="px-2 py-0.5 rounded bg-gray-800 text-xs font-semibold text-gray-300">
+              👥 ${b.guests}
+            </span>
+          </td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+              b.status === 'CONFIRMED' 
+                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' 
+                : 'bg-amber-950/80 text-amber-400 border border-amber-800/50'
+            }">
+              ${b.status}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-right">
+            <button onclick="deleteBooking(${b.id})" class="p-1.5 rounded-lg text-rose-400 hover:bg-rose-950/60 transition" title="Cancelar reserva">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </td>
+        </tr>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    // Delete Booking
+    async function deleteBooking(id) {
+      if (!confirm(`¿Eliminar la reserva #${id}?`)) return;
+      try {
+        const res = await fetch(`${API_BASE}/bookings/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('No se pudo eliminar');
+        showToast(`Reserva #${id} cancelada y eliminada`);
+        loadBookings();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Quick Test Booking
+    async function createMockBooking() {
+      const mockNames = ['Alejandro Ruiz', 'Sofía Valdés', 'Martín Morales', 'Lucía Torres'];
+      const randomName = mockNames[Math.floor(Math.random() * mockNames.length)];
+      const randomService = allServices.length > 0 ? allServices[Math.floor(Math.random() * allServices.length)] : { id: 1, name: 'Servicio Demo' };
+      
+      const payload = {
+        service_id: randomService.id,
+        service_name: randomService.name,
+        customer_name: randomName,
+        customer_email: `${randomName.toLowerCase().replace(' ', '.')}@example.com`,
+        customer_phone: '+34 699 ' + Math.floor(100000 + Math.random() * 900000),
+        booking_date: new Date(Date.now() + 86400000 * Math.floor(Math.random() * 7 + 1)).toISOString().split('T')[0],
+        booking_time: ['10:30', '16:00', '18:00', '20:00'][Math.floor(Math.random() * 4)],
+        guests: Math.floor(Math.random() * 4) + 1,
+        status: 'CONFIRMED',
+        notes: 'Reserva automática generada desde botón de prueba rápida',
+        created_at: new Date().toISOString()
+      };
+
+      try {
+        const res = await fetch(`${API_BASE}/bookings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          showToast(`Reserva demo agregada para ${randomName}`);
+          loadBookings();
+        }
+      } catch (e) {
+        showToast('Error creando reserva demo', 'error');
+      }
+    }
+
+    // ==========================================
+    // AI ASSISTANT CLIENT (CALLS BACKEND /api/chat)
+    // ==========================================
+    let aiConversation = [];
+
+    function toggleAiDrawer() {
+      const drawer = document.getElementById('aiDrawer');
+      const isHidden = drawer.classList.contains('hidden');
+      if (isHidden) {
+        drawer.classList.remove('hidden');
+        document.getElementById('aiInput').focus();
+      } else {
+        drawer.classList.add('hidden');
+      }
+      lucide.createIcons();
+    }
+
+    function clearAiChat() {
+      aiConversation = [];
+      const container = document.getElementById('aiMessagesContainer');
+      container.innerHTML = `
+        <div class="flex items-start space-x-2">
+          <div class="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30 mt-0.5">
+            <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-2xl rounded-tl-none p-3 text-gray-200 max-w-[88%] space-y-1.5">
+            <p>Chat reiniciado. ¿En qué puedo orientarte hoy sobre nuestras reservas?</p>
+          </div>
+        </div>
+      `;
+      lucide.createIcons();
+    }
+
+    function sendQuickPrompt(text) {
+      const drawer = document.getElementById('aiDrawer');
+      if (drawer.classList.contains('hidden')) {
+        drawer.classList.remove('hidden');
+      }
+      document.getElementById('aiInput').value = text;
+      handleAiSubmit(new Event('submit'));
+    }
+
+    function formatAiText(text) {
+      if (!text) return '';
+      // Escape HTML
+      let clean = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      
+      // Markdown bold, italic, code
+      clean = clean.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
+      clean = clean.replace(/\*(.*?)\*/g, '<em class="text-indigo-200">$1</em>');
+      clean = clean.replace(/`([^`]+)`/g, '<code class="bg-gray-800 text-indigo-300 px-1 py-0.5 rounded text-[11px] font-mono">$1</code>');
+      clean = clean.replace(/\n\n/g, '<div class="h-2"></div>');
+      clean = clean.replace(/\n/g, '<br/>');
+      return clean;
+    }
+
+    async function handleAiSubmit(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const input = document.getElementById('aiInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      input.value = '';
+      const sendBtn = document.getElementById('aiSendBtn');
+      sendBtn.disabled = true;
+
+      // Append User Bubble
+      const container = document.getElementById('aiMessagesContainer');
+      container.innerHTML += `
+        <div class="flex items-start justify-end space-x-2">
+          <div class="bg-indigo-600 text-white rounded-2xl rounded-tr-none p-3 max-w-[85%]">
+            <p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+          </div>
+          <div class="w-6 h-6 rounded-lg bg-gray-800 text-gray-300 flex items-center justify-center shrink-0 border border-gray-700 mt-0.5 text-[10px] font-bold">
+            TÚ
+          </div>
+        </div>
+      `;
+
+      aiConversation.push({ role: 'user', content: text });
+
+      // Typing Indicator
+      const typingId = 'typing-' + Date.now();
+      container.innerHTML += `
+        <div id="${typingId}" class="flex items-start space-x-2">
+          <div class="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30 mt-0.5">
+            <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+          </div>
+          <div class="bg-gray-900 border border-gray-800 rounded-2xl rounded-tl-none p-3 text-gray-400 flex items-center space-x-1.5">
+            <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></span>
+            <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay: 0.15s"></span>
+            <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style="animation-delay: 0.3s"></span>
+            <span class="text-[10px] text-gray-500 ml-1">Consultando backend...</span>
+          </div>
+        </div>
+      `;
+      lucide.createIcons();
+      container.scrollTop = container.scrollHeight;
+
+      try {
+        // CALL STRICTLY THE BACKEND ENDPOINT /api/chat
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: aiConversation })
+        });
+
+        // Remove typing indicator
+        const typingEl = document.getElementById(typingId);
+        if (typingEl) typingEl.remove();
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const reply = data.reply || 'Disculpa, no obtuve respuesta del modelo.';
+        aiConversation.push({ role: 'assistant', content: reply });
+
+        // Check if any service was mentioned to render interactive booking button
+        let bookingButtonsHtml = '';
+        allServices.forEach(s => {
+          if (reply.toLowerCase().includes(s.name.toLowerCase())) {
+            bookingButtonsHtml += `
+              <button onclick="openBookingModal(${s.id}, '${s.name.replace(/'/g, "\\'")}'); toggleAiDrawer();" 
+                class="mt-2 mr-1 inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition">
+                <i data-lucide="calendar" class="w-3 h-3"></i>
+                <span>Reservar ${s.name} ($${s.price})</span>
+              </button>
+            `;
+          }
+        });
+
+        container.innerHTML += `
+          <div class="flex items-start space-x-2">
+            <div class="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30 mt-0.5">
+              <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-2xl rounded-tl-none p-3 text-gray-200 max-w-[88%] space-y-1">
+              <div>${formatAiText(reply)}</div>
+              ${bookingButtonsHtml ? `<div class="pt-2 border-t border-gray-800/80 flex flex-wrap gap-1">${bookingButtonsHtml}</div>` : ''}
+              <div class="text-[9px] text-gray-500 text-right pt-1 font-mono">Backend • ${data.model}</div>
+            </div>
+          </div>
+        `;
+
+      } catch (err) {
+        console.error('Chat error:', err);
+        const typingEl = document.getElementById(typingId);
+        if (typingEl) typingEl.remove();
+
+        container.innerHTML += `
+          <div class="flex items-start space-x-2">
+            <div class="w-6 h-6 rounded-lg bg-rose-950 text-rose-400 flex items-center justify-center shrink-0 border border-rose-800 mt-0.5">
+              <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+            </div>
+            <div class="bg-rose-950/40 border border-rose-900/60 rounded-2xl rounded-tl-none p-3 text-rose-300 max-w-[88%]">
+              <p class="font-semibold text-rose-400">Error en el backend de IA:</p>
+              <p class="text-[11px] mt-0.5">${err.message}</p>
+            </div>
+          </div>
+        `;
+      } finally {
+        sendBtn.disabled = false;
+        lucide.createIcons();
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  </script>
+</body>
+</html>
