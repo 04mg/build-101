@@ -1,5 +1,5 @@
 # Comandos
-- Arrancar: `./start.sh` (local: `ENABLE_TUNNEL=0 ./start.sh`).
+- Arrancar: `./start.sh [--port 4000]` (local: `ENABLE_TUNNEL=0 ./start.sh`; TrailBase usa el puerto siguiente).
 - Desarrollo con recarga: `./watch.sh` (frontend `:5173`, agentes reinician al guardar).
 - Build: `pnpm --dir agents build && pnpm --dir frontend build`.
 - UI dev: `pnpm --dir frontend dev`. Logs: `.run/*.log`.

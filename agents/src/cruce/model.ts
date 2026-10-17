@@ -11,6 +11,8 @@ export const noteSchema = z.object({
   title: z.string().max(180), body: z.string().max(8000), status: statusSchema,
   origin: z.enum(['founder', 'agent', 'web', 'experiment']),
   url: z.string().max(2000).optional(), quote: z.string().max(6000).optional(),
+  // Why research last rewrote this note; its sources are the notes linked to it.
+  rationale: z.string().max(1500).optional(),
   publishedAt: z.string().optional(), createdAt: z.string(), updatedAt: z.string(),
   history: z.array(revisionSchema).default([]),
   embedding: z.array(z.number().finite()).optional(), embeddingModel: z.string().optional(),

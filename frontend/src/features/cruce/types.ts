@@ -12,6 +12,8 @@ export interface KnowledgeNote {
   origin: 'founder' | 'agent' | 'web' | 'experiment'
   url?: string
   quote?: string
+  /** Why research last rewrote this note; the linked sources justify it. */
+  rationale?: string
   publishedAt?: string
   createdAt: string
   updatedAt: string
@@ -50,7 +52,10 @@ export interface ProjectDocument {
 export interface Point { x: number; y: number }
 export interface AssistantReply { message: string; destination: 'ideation' | 'timeline' | 'people' | 'evidence' | 'research'; phase: PhaseId }
 export interface AssistantTurn extends AssistantReply { question: string; at: string }
-export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply }
+/** A note the assistant is about to change; `at` is where a new note will appear. */
+export interface EditTarget { op: 'update' | 'create' | 'delete' | 'link' | 'unlink'; id: string; at?: Point }
+export interface AssistantEdit { question: string; plan: string; targets: EditTarget[] }
+export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply; edit?: AssistantEdit }
 export interface ProjectSummary { id: number; name: string; progress: number; phaseProgress?: Record<PhaseId, number>; activePhase?: PhaseId; parent: ProjectDocument['parent'] }
 export interface Capabilities { ai: boolean; research: boolean; semanticMemory: boolean }
 export interface MemoryHit { projectId: number; note: KnowledgeNote; score: number }
