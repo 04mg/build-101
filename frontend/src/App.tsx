@@ -11,14 +11,20 @@ import { NewIdea } from '@/features/cruce/NewIdea'
 import { People } from '@/features/cruce/People'
 import { PhaseWorkspace } from '@/features/cruce/PhaseWorkspace'
 import { ProblemChat } from '@/features/cruce/ProblemChat'
+import { PublicSurvey } from '@/features/cruce/PublicSurvey'
 import { ProjectMenu } from '@/features/cruce/ProjectMenu'
 import { Timeline } from '@/features/cruce/Timeline'
 import { artifacts, phasePercent, phases } from '@/features/cruce/phases'
-import { initialQuestion, type AssistantReply, type Capabilities, type DeliverableKey, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
+import { canExplore, initialQuestion, type AssistantReply, type Capabilities, type DeliverableKey, type MemoryHit, type PhaseId, type Project, type ProjectSummary, type Question } from '@/features/cruce/types'
 
 type Page = 'ideation' | 'journey' | 'people' | 'phase'
 
 export default function App() {
+  const publicSurvey = window.location.pathname.match(/^\/s\/([a-zA-Z0-9-]+)\/?$/)
+  return publicSurvey ? <PublicSurvey token={publicSurvey[1]} /> : <WorkspaceApp />
+}
+
+function WorkspaceApp() {
   const [session, setSession] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [projects, setProjects] = useState<ProjectSummary[]>([]), [project, setProject] = useState<Project | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities>({ ai: false, research: false, semanticMemory: false })
@@ -30,6 +36,7 @@ export default function App() {
   const currentRef = useRef(project), busyRef = useRef(false), loadSequence = useRef(0)
 
   const accept = useCallback((result: Project) => {
+    if (currentRef.current?.id === result.id && currentRef.current.document.activePhase !== 'discover' && result.document.activePhase === 'discover') { setPage('ideation'); setArtifact(null) }
     setProject(result); currentRef.current = result; setPhase(result.document.activePhase ?? 'discover')
     try { sessionStorage.setItem('cruce-project', String(result.id)) } catch { /* Optional navigation preference. */ }
     setProjects(existing => {
@@ -75,6 +82,20 @@ export default function App() {
     }, 2500)
     return () => clearInterval(timer)
   }, [projectId, researchStatus, accept])
+
+  // Public respondents can add evidence while the founder has the graph open.
+  useEffect(() => {
+    if (!projectId) return
+    const refresh = () => {
+      if (busyRef.current || document.visibilityState === 'hidden') return
+      void getProject(projectId).then(result => {
+        if (!busyRef.current && currentRef.current?.id === projectId && result.document.revision > currentRef.current.document.revision) accept(result)
+      }).catch(() => { /* Keep working offline; explicit actions report errors. */ })
+    }
+    const timer = window.setInterval(refresh, 8000)
+    window.addEventListener('focus', refresh)
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
+  }, [projectId, accept])
 
   async function selectProject(id: string, nodeId?: string) {
     if (busyRef.current) return
@@ -127,7 +148,7 @@ export default function App() {
         try { accept(await getProject(active.id)) } catch { /* Display original conflict. */ }
       }
     } finally { busyRef.current = false; setBusy('') }
-    if (result && action.action === 'confirm' && capabilities.research) void runResearch(result.id)
+    if (result && (action.action === 'confirm' || (action.action === 'answer' && !active.document.confirmed && result.document.confirmed)) && capabilities.research) void runResearch(result.id)
     return result
   }
 
@@ -142,10 +163,16 @@ export default function App() {
 
   async function openPhase(next: PhaseId) {
     if (busyRef.current) return
+    if (project && next !== 'discover' && !canExplore(project)) { setError('Validá las tres hipótesis con al menos una encuesta y una entrevista por hipótesis antes de pasar a Explore.'); return }
+    if (currentRef.current && currentRef.current.document.activePhase !== next && !await mutate({ action: 'phase', phase: next })) return
     setSelected(null); setPanel('journey'); setPhase(next); setPage(next === 'discover' ? 'ideation' : 'phase')
-    if (currentRef.current && currentRef.current.document.activePhase !== next) await mutate({ action: 'phase', phase: next })
   }
-  function openArtifact(key: DeliverableKey, instruction?: string) { if (project && !busyRef.current) setArtifact({ key, instruction }) }
+  function openArtifact(key: DeliverableKey, instruction?: string) {
+    if (!project || busyRef.current) return
+    if (artifacts[key].phase !== 'discover' && !canExplore(project)) { setError('Primero validá las tres hipótesis con encuestas y entrevistas.'); return }
+    if (key === 'interview-guide' || key === 'survey') { void openPhase('discover'); return }
+    setArtifact({ key, instruction })
+  }
   function selectNote(id: string | null) {
     const key = id?.replace(/^deliverable-/, '')
     if (id?.startsWith('deliverable-') && key && key in artifacts) { openArtifact(key as DeliverableKey); return }
@@ -175,6 +202,8 @@ export default function App() {
   const isBusy = Boolean(busy)
   // Until the problem is defined, Discover is a focused conversation without the global bar.
   const defining = page === 'ideation' && (!project || !project.document.confirmed)
+  const graphWorkspace = page === 'ideation' && project?.document.confirmed
+  const assistantBar = !defining ? <AssistantBar key={project?.id ?? 'new'} history={project?.document.assistant ?? []} phase={phase} busy={busy} disabled={!capabilities.ai || Boolean(artifact) || search !== null} onAsk={async question => { if (currentRef.current) return mutate({ action: 'assist', question }); return await answer(question, initialQuestion) ? currentRef.current : null }} onNavigate={reply => void navigateReply(reply)} /> : null
   return <div className="cruce-app">
     <aside className="app-sidebar"><button className="brand-wordmark" aria-label="cruce, ir al recorrido" onClick={() => setPage('journey')}>cruce</button>
       <ProjectMenu project={project} projects={projects} disabled={isBusy} onSelect={id => void selectProject(id)} />
@@ -189,9 +218,9 @@ export default function App() {
     </aside>
     <main className="app-main">
       {(error || warning) && <div className={`notice-bar ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}><span>{error || warning}</span><button className="icon-button" aria-label="Cerrar aviso" onClick={() => { setError(''); setWarning('') }}><X size={14} /></button></div>}
-      {page === 'journey' ? <Timeline project={project} busy={isBusy} onPhase={next => void openPhase(next)} onArtifact={openArtifact} onStart={() => { void selectProject('new') }} /> : page === 'people' ? <People onSearch={() => setSearch('')} onJourney={() => setPage('journey')} /> : page === 'phase' ? <PhaseWorkspace phase={phase} project={project} busy={isBusy} onArtifact={openArtifact} onTimeline={() => setPage('journey')} onPhase={next => void openPhase(next)} onStart={() => void selectProject('new')} /> : !project ? <NewIdea busy={busy} onSubmit={value => answer(value, initialQuestion)} /> : !project.document.confirmed ? <ProblemChat project={project} busy={busy} onAnswer={answer} onAction={mutate} /> : <DiscoverWorkspace project={project} capabilities={capabilities} busy={busy} selected={selected} panel={panel} onSelect={selectNote} onPanel={openPanel} onAnswer={answer} onAction={mutate} onResearch={() => void runResearch()} onSearch={setSearch} />}
+      {page === 'journey' ? <Timeline project={project} busy={isBusy} onPhase={next => void openPhase(next)} onArtifact={openArtifact} onStart={() => { void selectProject('new') }} /> : page === 'people' ? <People onSearch={() => setSearch('')} onJourney={() => setPage('journey')} /> : page === 'phase' ? <PhaseWorkspace phase={phase} project={project} busy={isBusy} onArtifact={openArtifact} onTimeline={() => setPage('journey')} onPhase={next => void openPhase(next)} onStart={() => void selectProject('new')} /> : !project ? <NewIdea busy={busy} onSubmit={value => answer(value, initialQuestion)} /> : !project.document.confirmed ? <ProblemChat project={project} busy={busy} onAnswer={answer} onAction={mutate} /> : <DiscoverWorkspace project={project} capabilities={capabilities} busy={busy} selected={selected} panel={panel} onSelect={selectNote} onPanel={openPanel} onAnswer={answer} onAction={async action => { const result = await mutate(action); if (result && action.action === 'phase' && action.phase === 'explore') setPage('phase'); return result }} onResearch={() => void runResearch()} onSearch={setSearch} assistant={assistantBar} />}
     </main>
-    {!defining && <AssistantBar key={project?.id ?? 'new'} history={project?.document.assistant ?? []} phase={phase} busy={busy} disabled={!capabilities.ai || Boolean(artifact) || search !== null} onAsk={async question => { if (currentRef.current) return mutate({ action: 'assist', question }); return await answer(question, initialQuestion) ? currentRef.current : null }} onNavigate={reply => void navigateReply(reply)} />}
+    {!graphWorkspace && assistantBar}
     {artifact && project && <DeliverableEditor key={`${project.id}-${artifact.key}-${artifact.instruction ?? ''}`} artifactKey={artifact.key} initialInstruction={artifact.instruction} project={project} busy={busy} ai={capabilities.ai} onClose={() => setArtifact(null)} onAction={mutate} />}
     {search !== null && <MemorySearch initial={search} projects={projects} currentId={project?.id} busy={isBusy} onClose={() => setSearch(null)} onOpen={(id, nodeId) => { if (!busyRef.current) { setSearch(null); void selectProject(String(id), nodeId) } }} onReference={hit => void reference(hit)} />}
   </div>

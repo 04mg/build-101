@@ -23,6 +23,8 @@ export class ProjectStore {
     if (response.status === 401) throw new HttpError(401, 'Tu sesión venció. Volvé a ingresar.');
     if (response.status === 403 || response.status === 404) throw new HttpError(404, 'El proyecto no está disponible.');
     if (!response.ok) {
+      const detail = await response.text();
+      if (detail.includes('CRUCE_REVISION_CONFLICT')) throw new HttpError(409, 'Llegó nueva evidencia mientras guardabas. Actualizá y reintentá.');
       console.error('Cruce storage request failed:', method, path.split('?')[0], response.status);
       throw new HttpError(503, 'No se pudo guardar o leer el proyecto. Revisá las migraciones de TrailBase.');
     }
@@ -52,9 +54,19 @@ export class ProjectStore {
   async save(project: Project): Promise<Project> {
     project.document.revision++;
     documentSchema.parse(project.document);
-    await this.request(`cruce_projects/${project.id}`, 'PATCH', {
-      name: project.name, document: JSON.stringify(project.document), updated_at: new Date().toISOString(),
-    });
+    try {
+      await this.request(`cruce_projects/${project.id}`, 'PATCH', {
+        name: project.name, document: JSON.stringify(project.document), updated_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      // Some TrailBase versions omit the SQLite trigger message from API errors.
+      // Compare the persisted clock before classifying that failure as storage.
+      if (error instanceof HttpError && error.status === 503) {
+        const current = await this.get(project.id);
+        if (current.document.revision >= project.document.revision) throw new HttpError(409, 'Llegó nueva evidencia mientras guardabas. Actualizá y reintentá.');
+      }
+      throw error;
+    }
     return this.get(project.id);
   }
 

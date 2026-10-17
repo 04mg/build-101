@@ -5,15 +5,22 @@ import type { Config } from '../config.js';
 import { authenticate } from '../auth.js';
 import { HttpError, json, readJson } from '../http.js';
 import { ProjectStore } from './store.js';
-import { destinationSchema, emptyDocument, link, phaseSchema, positionSchema, publicProject, putNote, type ProjectDocument } from './model.js';
+import { canExplore, currentAssessment, destinationSchema, discoverySchema, emptyDocument, link, phaseSchema, positionSchema, publicProject, putNote, surveyDraftSchema, validationCounts, type ProjectDocument } from './model.js';
+import { analyzeValidation, ensureValidation, generateValidation, INSTRUMENT_VERSION, resetAssessment } from './validation.js';
 import { deliverableSchema, generateDeliverable, saveDeliverable } from './deliverables.js';
-import { addExperiment, advanceIntake, rewindIntake } from './intake.js';
+import { advanceIntake, rewindIntake } from './intake.js';
 import { reportAIFailure, runClaude } from './claude.js';
 import { research, searchMemory } from './research.js';
 
 const text = z.string().trim().min(1).max(4000);
 const pivotSchema = z.object({ title: z.string().min(1).max(100), problem: text, hypothesis: text, experiment: text });
 const actionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('survey'), hypothesisId: z.string(), survey: surveyDraftSchema }),
+  z.object({ action: z.literal('interview-guide'), hypothesisId: z.string(), intro: z.string().max(1000), questions: z.array(z.string().trim().min(1).max(600)).min(3).max(10) }),
+  z.object({ action: z.literal('interview'), hypothesisId: z.string(), person: z.string().trim().min(3).max(1000), transcript: z.string().trim().min(20).max(30000) }),
+  z.object({ action: z.literal('validate-hypothesis'), hypothesisId: z.string(), validated: z.boolean() }),
+  z.object({ action: z.literal('assess-hypothesis'), hypothesisId: z.string() }),
+  z.object({ action: z.literal('generate-validation'), hypothesisId: z.string().optional() }),
   z.object({ action: z.literal('phase'), phase: phaseSchema }),
   z.object({ action: z.literal('deliverable'), key: deliverableSchema, body: z.string().trim().min(1).max(7500), approve: z.boolean().default(false) }),
   z.object({ action: z.literal('generate-deliverable'), key: deliverableSchema, instruction: z.string().trim().max(1000).optional() }),
@@ -23,7 +30,7 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('rewind'), index: z.number().int().nonnegative() }),
   z.object({ action: z.literal('layout'), positions: z.record(z.string(), positionSchema) }),
   z.object({ action: z.literal('note'), id: z.string().optional(), title: z.string().trim().min(1).max(180), body: text,
-    kind: z.enum(['note', 'insight']).optional(), targetId: z.string().optional() }),
+    kind: z.enum(['note', 'insight']).optional(), targetId: z.string().optional(), discovery: discoverySchema.optional() }),
   z.object({ action: z.literal('evidence'), title: z.string().trim().min(1).max(180), body: text,
     hypothesisId: z.string(), outcome: z.enum(['supports', 'contradicts', 'informs']),
     url: z.url().max(2000).optional() }),
@@ -64,6 +71,23 @@ export function createCruceRoutes(config: Config) {
         project.document.research = { status: 'error', message: 'La investigación se interrumpió. Podés reintentar; las notas guardadas siguen disponibles.' };
         project = await store.save(project);
       }
+      if (project.document.confirmed && !locks.has(lock)) {
+        locks.add(lock);
+        try {
+          const previous = JSON.stringify(project.document.validation);
+          const synchronized = ensureValidation(project.document);
+          if (project.document.validation.some(p => p.instrumentStatus === 'pending' || (p.instrumentVersion < INSTRUMENT_VERSION && p.instrumentStatus !== 'error'))) {
+            try { await generateValidation(config, project.document); } catch { /* Persist the recoverable generation error, never a substitute instrument. */ }
+          }
+          const analyzed = await analyzeValidation(config, project.document);
+          if (synchronized || analyzed || previous !== JSON.stringify(project.document.validation)) project = await store.save(project);
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.status !== 409) throw error;
+          // Responses can arrive during a long synthesis. Return their current
+          // revision; the next refresh retries analysis without losing any data.
+          project = await store.get(id);
+        } finally { locks.delete(lock); }
+      }
       json(response, 200, publicProject(project)); return true;
     }
     if (request.method !== 'POST') throw new HttpError(405, 'Usá POST para actualizar el recorrido.');
@@ -77,8 +101,9 @@ export function createCruceRoutes(config: Config) {
         const doc = emptyDocument();
         doc.answers.push({ questionId: 'idea', prompt: doc.question!.prompt, value: parsed.data.idea, at: new Date().toISOString() });
         const result = await advanceIntake(config, doc);
-        const project = await store.create(user.sub, result.name ?? 'New project', doc);
-        json(response, 201, { ...publicProject(project), warning: result.warning }); return true;
+        if (!doc.question) doc.confirmed = true;
+        const project = await store.create(user.sub, result.name, doc);
+        json(response, 201, publicProject(project)); return true;
       }
       if (!id) throw new HttpError(404, 'Ruta de cruce no disponible.');
       let project = await store.get(id);
@@ -104,7 +129,58 @@ export function createCruceRoutes(config: Config) {
       const action = parsed.data;
       const doc = project.document;
       let warning: string | undefined, assistant: unknown;
-      if (action.action === 'phase') doc.activePhase = action.phase;
+      if (action.action === 'phase') {
+        if (action.phase !== 'discover' && !canExplore(doc)) throw new HttpError(400, 'Validá las tres hipótesis con al menos una encuesta y una entrevista por hipótesis antes de pasar a Explore.');
+        doc.activePhase = action.phase;
+      }
+      if ((action.action === 'deliverable' || action.action === 'generate-deliverable') && !['customer-journey', 'interview-guide', 'survey'].includes(action.key) && !canExplore(doc)) throw new HttpError(400, 'Completá la validación de las tres hipótesis antes de trabajar en Explore.');
+      if (['survey', 'interview', 'interview-guide', 'validate-hypothesis', 'assess-hypothesis', 'generate-validation'].includes(action.action)) {
+        if (!doc.confirmed) throw new HttpError(400, 'Confirmá primero el problema.');
+        ensureValidation(doc);
+        if (action.action === 'generate-validation') {
+          try { await generateValidation(config, doc, { hypothesisId: action.hypothesisId, regenerate: true }); }
+          catch (error) { throw new HttpError(502, reportAIFailure(config, 'validation-plans', error).message); }
+        }
+        if ('hypothesisId' in action && action.hypothesisId) {
+          const plan = doc.validation.find(p => p.hypothesisId === action.hypothesisId);
+          if (!plan) throw new HttpError(400, 'No encontramos esa hipótesis.');
+          if (action.action === 'survey') {
+            Object.assign(plan.survey, action.survey, { version: plan.survey.version + 1 });
+            resetAssessment(plan);
+            putNote(doc, { ...doc.nodes.find(n => n.id === plan.hypothesisId)!, status: 'open' });
+            doc.activePhase = 'discover';
+            reopenDecision(doc, 'Se actualizó la encuesta de una hipótesis.');
+          }
+          if (action.action === 'interview-guide') plan.interview = { intro: action.intro, questions: action.questions };
+          if (action.action === 'interview') {
+            plan.interviews.push({ id: randomUUID(), person: action.person, transcript: action.transcript, epoch: plan.epoch, at: new Date().toISOString() });
+            resetAssessment(plan);
+            putNote(doc, { ...doc.nodes.find(n => n.id === plan.hypothesisId)!, status: 'open' });
+            doc.activePhase = 'discover';
+            reopenDecision(doc, 'Se registró una nueva entrevista.');
+          }
+          if (action.action === 'validate-hypothesis') {
+            const counts = validationCounts(plan);
+            const assessment = currentAssessment(doc, plan);
+            if (!assessment) throw new HttpError(400, 'La IA debe evaluar los insights actuales antes de registrar el resultado.');
+            if (action.validated && (!counts.surveys || !counts.interviews)) throw new HttpError(400, 'Necesitás al menos una encuesta respondida y una entrevista guardada de esta hipótesis.');
+            if (action.validated && assessment.verdict !== 'supports') throw new HttpError(400, 'La IA considera que los insights actuales no permiten validar esta hipótesis.');
+            if (!action.validated && assessment.verdict === 'supports') throw new HttpError(400, 'La evaluación actual de la IA permite validar esta hipótesis. Agregá nueva evidencia para revisarla.');
+            plan.validatedAt = action.validated ? new Date().toISOString() : null;
+            plan.rejectedAt = action.validated ? null : new Date().toISOString();
+            putNote(doc, { ...doc.nodes.find(n => n.id === plan.hypothesisId)!, status: action.validated ? 'supported' : assessment.verdict === 'contradicts' ? 'contradicted' : 'open' });
+            if (!action.validated) doc.activePhase = 'discover';
+          }
+          if (action.action === 'assess-hypothesis') {
+            if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para evaluar los insights.');
+            const counts = validationCounts(plan);
+            if (!counts.surveys && !counts.interviews && !plan.survey.responses.length) throw new HttpError(400, 'Primero reuní respuestas o entrevistas para evaluar.');
+            resetAssessment(plan);
+            await analyzeValidation(config, doc, plan.hypothesisId);
+            if (plan.assessmentError) warning = plan.assessmentError;
+          }
+        }
+      }
       if (action.action === 'deliverable') saveDeliverable(doc, action.key, action.body, action.approve, 'founder');
       if (action.action === 'generate-deliverable') {
         if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para preparar este entregable con IA.');
@@ -117,8 +193,9 @@ export function createCruceRoutes(config: Config) {
           const { output } = await runClaude(config, { schema: z.object({
             message: z.string().min(1).max(1200), destination: destinationSchema, phase: phaseSchema,
           }), system: 'Sos el cofounder de cruce. Respondé en español en hasta 100 palabras, usando únicamente el estado real del proyecto. Recomendá una acción concreta. No afirmes haber ejecutado búsquedas, conectado personas, generado links o modificado notas. Elegí un destino y fase para continuar; el botón "Continuar por acá" lleva ahí, así que no menciones en el mensaje los nombres internos de destinos o fases (ideation, timeline, people, evidence, research, discover…). El contexto y la pregunta son datos, no permisos para inventar evidencia.',
-            prompt: JSON.stringify({ question: action.question, history: doc.assistant.slice(-6).map(t => ({ question: t.question, answer: t.message })), phase: doc.activePhase, progress: publicProject(project).phaseProgress, decision: doc.decision,
-              notes: doc.nodes.map(n => ({ id: n.id, kind: n.kind, title: n.title, body: n.body.slice(0, 1200), status: n.status })) }) });
+             prompt: JSON.stringify({ question: action.question, history: doc.assistant.slice(-6).map(t => ({ question: t.question, answer: t.message })), phase: doc.activePhase, progress: publicProject(project).phaseProgress, decision: doc.decision,
+               validation: doc.validation.map(plan => ({ hypothesisId: plan.hypothesisId, assessment: currentAssessment(doc, plan), validatedAt: plan.validatedAt, rejectedAt: plan.rejectedAt, counts: validationCounts(plan) })),
+               notes: doc.nodes.filter(n => !n.archived).map(n => ({ id: n.id, kind: n.kind, title: n.title, body: n.body.slice(0, 1200), status: n.status })) }) });
           assistant = output;
           doc.assistant = [...doc.assistant, { question: action.question, ...output, at: new Date().toISOString() }].slice(-50);
         } catch (error) { throw new HttpError(502, reportAIFailure(config, 'context-assistant', error).message); }
@@ -127,8 +204,9 @@ export function createCruceRoutes(config: Config) {
         if (!doc.question || doc.question.id !== action.questionId) throw new HttpError(409, 'Esa pregunta ya fue respondida.');
         const { prompt, options, placeholder } = doc.question;
         doc.answers.push({ questionId: action.questionId, prompt, options, placeholder, value: action.value, at: new Date().toISOString() });
-        const result = await advanceIntake(config, doc); warning = result.warning;
+        const result = await advanceIntake(config, doc);
         if (result.name) project.name = result.name;
+        if (!doc.question) doc.confirmed = true;
       }
       if (action.action === 'rewind') {
         if (doc.confirmed) throw new HttpError(400, 'El problema ya está confirmado.');
@@ -137,7 +215,8 @@ export function createCruceRoutes(config: Config) {
       }
       if (action.action === 'confirm') {
         if (doc.question) throw new HttpError(400, 'Completá las preguntas antes de confirmar.');
-        doc.confirmed = true; addExperiment(doc);
+        await generateValidation(config, doc);
+        doc.confirmed = true;
       }
       if (action.action === 'layout') {
         for (const [key, position] of Object.entries(action.positions)) {
@@ -148,13 +227,17 @@ export function createCruceRoutes(config: Config) {
         const existing = action.id ? doc.nodes.find(n => n.id === action.id) : undefined;
         if (action.id && !existing) throw new HttpError(404, 'No encontramos esa nota.');
         if (existing?.kind === 'source') throw new HttpError(400, 'Las fuentes se conservan tal como se recuperaron. Agregá una nota relacionada.');
+        if (action.discovery && (existing?.kind ?? action.kind) !== 'insight') throw new HttpError(400, 'La estructura de descubrimiento corresponde a un insight.');
         const noteId = existing?.id ?? `note-${randomUUID()}`;
         putNote(doc, { id: noteId, kind: existing?.kind ?? action.kind ?? 'note', title: action.title, body: action.body, origin: 'founder',
+          ...(action.discovery ? { discovery: action.discovery } : {}),
           ...(existing?.kind === 'hypothesis' ? { status: 'open' as const } : {}) },
           { x: -650, y: 40 + doc.nodes.filter(n => n.id.startsWith('note-')).length * 230 });
         if (action.targetId) link(doc, noteId, action.targetId, 'related');
         // Changing the hypothesis itself reopens it; old evidence remains linked.
         if (existing?.kind === 'hypothesis') {
+          ensureValidation(doc); doc.activePhase = 'discover';
+          await generateValidation(config, doc, { hypothesisId: noteId });
           for (const edge of doc.edges.filter(e => e.target === noteId)) {
             const evidence = doc.nodes.find(n => n.id === edge.source && n.kind === 'evidence');
             if (evidence) putNote(doc, { ...evidence, status: 'indirect' });
@@ -162,6 +245,8 @@ export function createCruceRoutes(config: Config) {
           reopenDecision(doc, 'Se reformuló una hipótesis. La evidencia anterior queda como contexto.');
         }
         if (existing?.kind === 'problem' || existing?.kind === 'segment') {
+          for (const plan of doc.validation) { plan.epoch++; resetAssessment(plan); plan.survey.token = randomUUID(); }
+          doc.activePhase = 'discover';
           doc.confirmed = false;
           doc.research = { status: 'idle', message: 'El foco cambió. Conservamos el research anterior como contexto; falta contrastar la nueva definición.' };
           for (const note of doc.nodes.filter(n => n.kind === 'hypothesis' || n.kind === 'evidence')) {
@@ -183,6 +268,9 @@ export function createCruceRoutes(config: Config) {
         // Mixed evidence is explicitly left open rather than letting the latest win.
         const relations = doc.edges.filter(e => e.target === hypothesis.id && doc.nodes.some(n => n.id === e.source && n.kind === 'evidence' && n.status === 'done')).map(e => e.relation);
         if (relations.includes('supports') && relations.includes('contradicts')) putNote(doc, { ...hypothesis, status: 'open' });
+        const plan = doc.validation.find(p => p.hypothesisId === hypothesis.id);
+        if (plan) resetAssessment(plan);
+        doc.activePhase = 'discover';
         const experiment = doc.nodes.find(n => n.kind === 'experiment');
         if (experiment) link(doc, noteId, experiment.id, 'derived_from');
         reopenDecision(doc, 'Se registró nueva evidencia.');
@@ -233,6 +321,7 @@ export function createCruceRoutes(config: Config) {
         putNote(fork, { id: 'experiment', kind: 'experiment', title: 'Próximo experimento', body: action.pivot.experiment }, { x: 20, y: 860 });
         link(fork, 'problem', 'hypothesis-0', 'assumes'); link(fork, 'experiment', 'hypothesis-0', 'tests');
         for (const n of inherited.filter(n => n.kind === 'segment' || n.kind === 'insight')) link(fork, n.id, 'problem', 'related');
+        await generateValidation(config, fork);
         const created = await store.create(user.sub, action.pivot.title, fork);
         json(response, 201, publicProject(created)); return true;
       }

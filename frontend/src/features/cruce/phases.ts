@@ -1,4 +1,5 @@
 import type { DeliverableKey, PhaseId, Project } from './types'
+import { hypothesisValidated } from './types'
 
 export const phases: { id: PhaseId; name: string; question: string; description: string; subtitle: string }[] = [
   { id: 'discover', name: 'Discover', question: '¿Qué problema vale la pena resolver?', description: 'Entender a quién le pasa, cómo lo resuelve hoy y qué evidencia tenemos.', subtitle: 'Discover & Frame · Validate Problem' },
@@ -27,11 +28,10 @@ export function getSteps(project: Project | null, phase: PhaseId) {
   const doc = project?.document
   if (phase === 'discover') return [
     { id: 'problem', title: 'Formular el problema', done: Boolean(doc?.confirmed), section: 'frame' },
-    { id: 'research', title: 'Investigar alternativas y pain points', done: doc?.research.status === 'complete', section: 'frame' },
-    { id: 'hypotheses', title: 'Definir las hipótesis', done: Boolean(doc?.nodes.some(n => n.kind === 'hypothesis')), section: 'frame' },
-    { id: 'experiment', title: 'Diseñar la validación', done: Boolean(doc?.nodes.some(n => n.kind === 'experiment')), section: 'validate' },
-    { id: 'evidence', title: 'Reunir y contrastar evidencia', done: Boolean(doc?.nodes.some(n => n.kind === 'evidence' && n.status === 'done')), section: 'validate' },
-    { id: 'decision', title: 'Tomar una decisión sobre el problema', done: Boolean(doc?.decision), section: 'validate' },
+    ...[0, 1, 2].map(i => {
+      const hypothesis = doc?.nodes.filter(n => n.kind === 'hypothesis')[i]
+      return { id: hypothesis?.id ?? `hypothesis-${i}`, title: `Validar hipótesis 0${i + 1}`, done: Boolean(project && hypothesis && hypothesisValidated(project, hypothesis.id)), section: 'validate' }
+    }),
   ]
   return (Object.entries(artifacts) as [DeliverableKey, typeof artifacts[DeliverableKey]][])
     .filter(([, artifact]) => artifact.phase === phase && !artifact.optional)

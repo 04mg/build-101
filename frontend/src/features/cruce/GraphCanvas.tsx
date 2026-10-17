@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Maximize, Minus, Plus } from 'lucide-react'
+import { Check, Maximize, Minus, Plus, X } from 'lucide-react'
 import { kindLabels, relationLabels, statusLabels, type GraphEdge, type KnowledgeNote, type Point } from './types'
 import { sourceContribution } from './sourceContribution'
 
@@ -14,11 +14,13 @@ interface Props {
   onSelect: (id: string | null) => void
   /** Animate the view to notes as they are created or updated, then back to the whole map. */
   follow?: boolean
+  hypothesisOutcomes?: Record<string, 'validated' | 'rejected'>
+  focusRequest?: { id: string; sequence: number } | null
 }
-const size = (_note: KnowledgeNote) => ({ width: 220, height: 180 })
+const size = (note: KnowledgeNote) => ({ width: 220, height: note.discovery ? 280 : 180 })
 const clamp = (zoom: number) => Math.max(0.15, Math.min(2, zoom))
 
-export function GraphCanvas({ notes, edges, positions, selected, onSelect, follow = false }: Props) {
+export function GraphCanvas({ notes, edges, positions, selected, onSelect, follow = false, hypothesisOutcomes = {}, focusRequest }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<Viewport>({ x: 0, y: 0, zoom: 0.85 })
   const viewRef = useRef(view)
@@ -107,12 +109,21 @@ export function GraphCanvas({ notes, edges, positions, selected, onSelect, follo
   }, [])
 
   // Opening a note brings it to the center at a readable zoom.
-  function readNote(id: string) {
+  const readNote = useCallback((id: string, expanded = true) => {
     const el = container.current, p = positionsRef.current[id]
     if (!el || !p) return
     const zoom = Math.max(1, viewRef.current.zoom)
-    animateTo({ x: el.clientWidth / 2 - (p.x + 140) * zoom, y: Math.min(el.clientHeight / 2 - (p.y + 90) * zoom, 60 - p.y * zoom), zoom })
-  }
+    animateTo({ x: el.clientWidth / 2 - (p.x + (expanded ? 140 : 110)) * zoom, y: expanded ? Math.min(el.clientHeight / 2 - (p.y + 90) * zoom, 60 - p.y * zoom) : el.clientHeight / 2 - (p.y + 90) * zoom, zoom })
+  }, [animateTo])
+
+  useEffect(() => {
+    if (!focusRequest) return
+    stopTour()
+    readNote(focusRequest.id, false)
+    setFlash(focusRequest.id)
+    const timer = window.setTimeout(() => setFlash(null), 1400)
+    return () => clearTimeout(timer)
+  }, [focusRequest, readNote, stopTour])
 
   function zoomAt(factor: number, point?: Point) {
     const el = container.current
@@ -214,11 +225,12 @@ export function GraphCanvas({ notes, edges, positions, selected, onSelect, follo
         {notes.map(note => <div key={note.id} data-node-id={note.id} role="button" tabIndex={0}
           aria-label={`${kindLabels[note.kind]}: ${note.title}. ${statusLabels[note.status]}`} aria-pressed={selected === note.id}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(note.id); readNote(note.id) } }}
-          className={`graph-note ${note.kind} ${selected === note.id ? 'selected expanded' : ''} ${flash === note.id ? 'flash' : ''} ${note.status}`}
+          className={`graph-note ${note.kind} ${selected === note.id ? 'selected expanded' : ''} ${flash === note.id ? 'flash' : ''} ${note.status} ${hypothesisOutcomes[note.id] ? `outcome-${hypothesisOutcomes[note.id]}` : ''}`}
           style={{ left: positions[note.id]?.x ?? 0, top: positions[note.id]?.y ?? 0 }}>
+          {note.kind === 'hypothesis' && hypothesisOutcomes[note.id] && <span className={`hypothesis-result graph-hypothesis-result ${hypothesisOutcomes[note.id]}`} role="img" aria-label={hypothesisOutcomes[note.id] === 'validated' ? 'Hipótesis validada' : 'Hipótesis no validada'}>{hypothesisOutcomes[note.id] === 'validated' ? <Check size={40} strokeWidth={3} /> : <X size={40} strokeWidth={3} />}</span>}
           {note.kind === 'problem' ? <><strong>{note.title}</strong><p>{note.body}</p></> : <>
-            <strong>{note.title}</strong><p>{sourceContribution(note, notes, edges)}</p>
-            <span className="note-foot">{note.kind === 'source' && note.url ? hostname(note.url) : note.status === 'open' ? (note.origin === 'founder' ? 'Tu punto de partida' : 'Por contrastar') : statusLabels[note.status]}</span>
+            <strong>{note.title}</strong>{note.discovery ? <div className="discovery-sections"><section><h4>Observación</h4><p>{note.discovery.observation}</p></section><section><h4>Insight</h4><p>{note.discovery.insight}</p></section><section><h4>Oportunidad (HMW)</h4><p>{note.discovery.opportunity}</p></section></div> : <p>{sourceContribution(note, notes, edges)}</p>}
+            <span className="note-foot">{hypothesisOutcomes[note.id] === 'validated' ? 'Validada' : hypothesisOutcomes[note.id] === 'rejected' ? 'No validada' : note.kind === 'source' && note.url ? hostname(note.url) : note.status === 'open' ? (note.origin === 'founder' ? 'Tu punto de partida' : 'Por contrastar') : statusLabels[note.status]}</span>
           </>}
         </div>)}
       </div>

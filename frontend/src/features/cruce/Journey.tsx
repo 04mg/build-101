@@ -64,7 +64,6 @@ export function Journey(props: Props) {
       {hypotheses.map(note => <button key={note.id} className="hypothesis-row" onClick={() => onSelect(note.id)}><span className={`status-dot ${note.status}`} /><span>{note.body}</span><span className="sr-only">{statusLabels[note.status]}</span></button>)}
     </section>
     {doc.confirmed && <div className="panel-actions secondary-actions"><button className="text-button" disabled={Boolean(busy)} onClick={onEvidence}>＋ Agregar evidencia</button><button className="text-button" onClick={() => onSearch(problem?.body ?? '')}>Buscar aprendizajes parecidos <ArrowRight size={12} /></button></div>}
-    <details className="progress-explanation"><summary>Cómo avanza esta fase</summary><p>15% problema · 20% research · 15% hipótesis · 10% experimento · 25% evidencia · 15% decisión.</p><p>Medimos el trabajo resuelto, no la probabilidad de éxito. Una hipótesis contradicha también aporta progreso.</p></details>
   </div>
 }
 
@@ -130,13 +129,15 @@ export function EvidenceForm({ project, busy, onBack, onSave, hypothesisId }: { 
 
 export function NotePanel({ note, project, busy, onClose, onSelect, onSave, onEvidence }: { note: KnowledgeNote; project: Project; busy: string; onClose: () => void; onSelect: (id: string) => void; onSave: Props['onAction']; onEvidence: (id: string) => void }) {
   const [title, setTitle] = useState(note.title), [body, setBody] = useState(note.body), [target, setTarget] = useState('')
+  const [discovery, setDiscovery] = useState(note.discovery)
+  const editedBody = discovery ? `Observación\n${discovery.observation}\n\nInsight\n${discovery.insight}\n\nOportunidad (HMW)\n${discovery.opportunity}` : body
   const connections = project.document.edges.filter(e => e.source === note.id || e.target === note.id)
   return <div className="journey-panel note-detail"><div className="detail-heading"><span className="panel-kicker">{note.kind === 'source' ? 'Aporte de la fuente' : 'En tu mapa'}</span><button className="icon-button" aria-label="Cerrar nota" onClick={onClose}><X size={16} /></button></div>
     <span className={`note-status ${note.status}`}>{statusLabels[note.status]}</span>
     {note.inheritedFrom && <p className="input-hint">⑂ Contexto heredado del proyecto #{note.inheritedFrom.projectId}. Su alcance original se conserva.</p>}
     {note.kind === 'source' ? <><h2>{note.title}</h2><p className="source-contribution">{sourceContribution(note, project.document.nodes, project.document.edges)}</p>{note.url && <a className="source-link" href={note.url} target="_blank" rel="noreferrer">Abrir fuente ↗</a>}<details className="source-original"><summary>Ver contenido original</summary><p className="source-content">{note.quote || note.body}</p></details><p className="input-hint">Consultada {formatDate(note.updatedAt)}{note.publishedAt ? ` · Publicada ${formatDate(note.publishedAt)}` : ''}</p></> :
-      <form className="editor-form" onSubmit={e => { e.preventDefault(); void onSave({ action: 'note', id: note.id, title, body }) }}><label>Título<input required maxLength={180} value={title} onChange={e => setTitle(e.target.value)} /></label><label>Contenido<textarea required maxLength={4000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label><button disabled={Boolean(busy) || !title.trim() || !body.trim() || (title === note.title && body === note.body)}>Guardar cambios</button></form>}
-    {note.kind === 'hypothesis' && <button className="primary" disabled={Boolean(busy)} onClick={() => onEvidence(note.id)}>Contrastar con evidencia <ArrowRight size={13} /></button>}
+      <form className="editor-form" onSubmit={e => { e.preventDefault(); void onSave({ action: 'note', id: note.id, title, body: editedBody, ...(discovery ? { discovery } : {}) }) }}><label>Título<input required maxLength={180} value={title} onChange={e => setTitle(e.target.value)} /></label>{discovery ? <>{([['observation', 'Observación', 700], ['insight', 'Insight', 700], ['opportunity', 'Oportunidad (HMW)', 450]] as const).map(([key, label, limit]) => <label key={key}>{label}<textarea required minLength={10} maxLength={limit} rows={4} value={discovery[key]} onChange={e => setDiscovery(d => d ? { ...d, [key]: e.target.value } : d)} /></label>)}</> : <label>Contenido<textarea required maxLength={4000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label>}<button disabled={Boolean(busy) || !title.trim() || !editedBody.trim() || (title === note.title && editedBody === note.body)}>Guardar cambios</button></form>}
+    {note.kind === 'hypothesis' && <button className="primary" disabled={Boolean(busy)} onClick={() => onEvidence(note.id)}>Encuesta y entrevistas <ArrowRight size={13} /></button>}
     <section className="related-notes"><div className="section-title">Conexiones</div>{connections.map(edge => {
       const other = project.document.nodes.find(n => n.id === (edge.source === note.id ? edge.target : edge.source))
       return other ? <button className="text-button related-link" key={edge.id} onClick={() => onSelect(other.id)}>{other.title} <ArrowRight size={12} /></button> : null

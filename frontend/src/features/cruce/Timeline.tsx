@@ -10,7 +10,7 @@ export function Timeline({ project, onPhase, onArtifact, onStart, busy }: {
   const current = project?.document.activePhase ?? 'discover'
   const problem = project?.document.nodes.find(n => n.id === 'problem')
   return <div className="page-scroll"><div className="page-content timeline-page">
-    <div className="page-heading"><div><span className="eyebrow">DE IDEA A PROYECTO</span><h1>Tu recorrido</h1><p>{problem?.body ?? 'Un problema claro. Evidencia real. Una solución que vale la pena probar.'}</p></div>
+    <div className="page-heading"><div><h1>Tu recorrido</h1><p>{problem?.body ?? 'Un problema claro. Evidencia real. Una solución que vale la pena probar.'}</p></div>
       <div className="overall-progress"><span><strong>{done} de {allSteps.length}</strong> pasos · {overallPercent(project)}%</span><div className="segmented-track" aria-hidden="true">{allSteps.map((step, i) => <span key={i} className={step.done ? 'filled' : ''} />)}</div></div>
     </div>
     <section className="timeline-card card" aria-label="Recorrido Discover, Explore y Prototype"><div className="phase-timeline">
