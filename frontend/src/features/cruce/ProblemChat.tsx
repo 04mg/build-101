@@ -68,7 +68,7 @@ export function ProblemChat({ project, busy, onAnswer, onAction }: {
       {question && <form className="chat-composer" onSubmit={submit}><textarea aria-label="Tu respuesta" rows={1} maxLength={3999} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={question.placeholder || 'Escribí tu respuesta…'} disabled={Boolean(busy)} /><button className="assistant-send" aria-label="Enviar" disabled={Boolean(busy) || !input.trim()}>{busy ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={19} />}</button></form>}
     </section>
     <section className="define-graph fill-canvas" aria-label="Mapa del problema">
-      <GraphCanvas key={project.id} notes={notes} edges={doc.edges} positions={doc.positions} selected={selected} onSelect={setSelected} follow />
+      <GraphCanvas key={project.id} notes={notes} edges={doc.edges} positions={doc.positions} selected={selected} onSelect={setSelected} follow onMove={(id, position) => void onAction({ action: 'layout', positions: { [id]: position } })} />
     </section>
   </div>
 }

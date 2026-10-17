@@ -2,14 +2,14 @@ import { useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { GraphCanvas } from './GraphCanvas'
 import { EvidenceForm, Journey, NotePanel } from './Journey'
-import type { Capabilities, Project, Question } from './types'
+import type { Capabilities, EditTarget, Project, Question } from './types'
 import { hypothesisRejected, hypothesisValidated } from './types'
 import { ValidationWorkspace } from './ValidationWorkspace'
 
 export type DiscoverPanel = 'journey' | 'note' | 'evidence' | 'decision'
 // The validation panel takes the chat's place; the assistant belongs to the graph.
-export function DiscoverWorkspace({ project, capabilities, busy, selected, panel, onSelect, onPanel, onAnswer, onAction, onResearch, onSearch, assistant }: {
-  project: Project; capabilities: Capabilities; busy: string; selected: string | null; panel: DiscoverPanel;
+export function DiscoverWorkspace({ project, capabilities, busy, selected, panel, editing, onSelect, onPanel, onAnswer, onAction, onResearch, onSearch, assistant }: {
+  project: Project; capabilities: Capabilities; busy: string; selected: string | null; panel: DiscoverPanel; editing: EditTarget[];
   onSelect: (id: string | null) => void; onPanel: (panel: DiscoverPanel, hypothesisId?: string) => void;
   onAnswer: (value: string, question: Question) => Promise<boolean>; onAction: (action: Record<string, unknown>) => Promise<Project | null>;
   onResearch: () => void; onSearch: (query: string) => void;
@@ -37,7 +37,7 @@ export function DiscoverWorkspace({ project, capabilities, busy, selected, panel
   return <div className="define-layout validation-layout">
     <aside className="validation-sidebar" aria-label="Validar el problema"><ValidationWorkspace key={project.id} project={project} busy={busy} onAction={onAction} onSelect={onSelect} active={activeHypothesis} onOpen={openHypothesis} /></aside>
     <section className="discover-map fill-canvas" aria-label="Grafo del problema">
-    <GraphCanvas key={project.id} notes={notes} edges={doc.edges} positions={doc.positions} selected={selected} onSelect={onSelect} follow hypothesisOutcomes={hypothesisOutcomes} focusRequest={focusRequest} />
+    <GraphCanvas key={project.id} notes={notes} edges={doc.edges} positions={doc.positions} selected={selected} onSelect={onSelect} follow hypothesisOutcomes={hypothesisOutcomes} focusRequest={focusRequest} editing={editing} onMove={(id, position) => void onAction({ action: 'layout', positions: { [id]: position } })} />
     {assistant}
     {drawer && <aside className="map-drawer" aria-label="Trabajar con el cofounder">
       {drawer !== 'note' && <button className="icon-button map-drawer-close" aria-label="Cerrar panel" onClick={close}><X size={16} /></button>}

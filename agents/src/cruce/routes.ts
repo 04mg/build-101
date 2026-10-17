@@ -11,6 +11,7 @@ import { deliverableSchema, generateDeliverable, saveDeliverable } from './deliv
 import { advanceIntake, rewindIntake } from './intake.js';
 import { reportAIFailure, runClaude } from './claude.js';
 import { research, searchMemory } from './research.js';
+import { applyAssist, planAssist, reopenDecision, targetSchema } from './edits.js';
 
 const text = z.string().trim().min(1).max(4000);
 const pivotSchema = z.object({ title: z.string().min(1).max(100), problem: text, hypothesis: text, experiment: text });
@@ -24,7 +25,8 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('phase'), phase: phaseSchema }),
   z.object({ action: z.literal('deliverable'), key: deliverableSchema, body: z.string().trim().min(1).max(7500), approve: z.boolean().default(false) }),
   z.object({ action: z.literal('generate-deliverable'), key: deliverableSchema, instruction: z.string().trim().max(1000).optional() }),
-  z.object({ action: z.literal('assist'), question: text }),
+  z.object({ action: z.literal('assist'), question: text, edit: z.boolean().default(false), selected: z.string().max(100).optional() }),
+  z.object({ action: z.literal('assist-apply'), question: text, plan: text, targets: z.array(targetSchema).min(1).max(8) }),
   z.object({ action: z.literal('answer'), value: text, questionId: z.string() }),
   z.object({ action: z.literal('confirm') }),
   z.object({ action: z.literal('rewind'), index: z.number().int().nonnegative() }),
@@ -128,7 +130,7 @@ export function createCruceRoutes(config: Config) {
       if (!parsed.success) throw new HttpError(400, 'Revisá los datos de la nota o respuesta.');
       const action = parsed.data;
       const doc = project.document;
-      let warning: string | undefined, assistant: unknown;
+      let warning: string | undefined, assistant: unknown, edit: unknown;
       if (action.action === 'phase') {
         if (action.phase !== 'discover' && !canExplore(doc)) throw new HttpError(400, 'Validá las tres hipótesis con al menos una encuesta y una entrevista por hipótesis antes de pasar a Explore.');
         doc.activePhase = action.phase;
@@ -187,7 +189,28 @@ export function createCruceRoutes(config: Config) {
         try { await generateDeliverable(config, doc, action.key, action.instruction); }
         catch (error) { throw new HttpError(502, reportAIFailure(config, 'generate-deliverable', error).message); }
       }
-      if (action.action === 'assist') {
+      if (action.action === 'assist' && action.edit) {
+        if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para consultar al cofounder.');
+        if (!doc.confirmed) throw new HttpError(400, 'Confirmá primero el problema.');
+        try {
+          const plan = await planAssist(config, doc, action.question, publicProject(project).phaseProgress, action.selected);
+          assistant = plan.reply;
+          if (plan.targets.length) edit = { question: action.question, plan: plan.reply.message, targets: plan.targets };
+          doc.assistant = [...doc.assistant, { question: action.question, ...plan.reply, at: new Date().toISOString() }].slice(-50);
+        } catch (error) { throw new HttpError(502, reportAIFailure(config, 'assist-plan', error).message); }
+      }
+      if (action.action === 'assist-apply') {
+        if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para consultar al cofounder.');
+        try {
+          const result = await applyAssist(config, doc, action.question, action.plan, action.targets);
+          if (doc.validation.some(p => p.instrumentStatus === 'pending')) await generateValidation(config, doc);
+          const last = doc.assistant.at(-1);
+          const reply = { message: result.touched.length ? result.summary : 'No hice cambios en el mapa: ninguno de los cambios planificados era aplicable.', destination: last?.destination ?? 'ideation', phase: last?.phase ?? 'discover' };
+          assistant = reply;
+          if (last?.question === action.question) Object.assign(last, reply);
+        } catch (error) { throw new HttpError(502, reportAIFailure(config, 'assist-apply', error).message); }
+      }
+      if (action.action === 'assist' && !action.edit) {
         if (!config.ai) throw new HttpError(503, 'Iniciá sesión en Claude Code para consultar al cofounder.');
         try {
           const { output } = await runClaude(config, { schema: z.object({
@@ -220,7 +243,8 @@ export function createCruceRoutes(config: Config) {
       }
       if (action.action === 'layout') {
         for (const [key, position] of Object.entries(action.positions)) {
-          if (doc.nodes.some(n => n.id === key)) doc.positions[key] = position;
+          // `sources:<note>` holds a source list's offset from its note.
+          if (doc.nodes.some(n => n.id === key.replace(/^sources:/, ''))) doc.positions[key] = position;
         }
       }
       if (action.action === 'note') {
@@ -229,7 +253,7 @@ export function createCruceRoutes(config: Config) {
         if (existing?.kind === 'source') throw new HttpError(400, 'Las fuentes se conservan tal como se recuperaron. Agregá una nota relacionada.');
         if (action.discovery && (existing?.kind ?? action.kind) !== 'insight') throw new HttpError(400, 'La estructura de descubrimiento corresponde a un insight.');
         const noteId = existing?.id ?? `note-${randomUUID()}`;
-        putNote(doc, { id: noteId, kind: existing?.kind ?? action.kind ?? 'note', title: action.title, body: action.body, origin: 'founder',
+        putNote(doc, { id: noteId, kind: existing?.kind ?? action.kind ?? 'note', title: action.title, body: action.body, origin: 'founder', rationale: undefined,
           ...(action.discovery ? { discovery: action.discovery } : {}),
           ...(existing?.kind === 'hypothesis' ? { status: 'open' as const } : {}) },
           { x: -650, y: 40 + doc.nodes.filter(n => n.id.startsWith('note-')).length * 230 });
@@ -326,14 +350,7 @@ export function createCruceRoutes(config: Config) {
         json(response, 201, publicProject(created)); return true;
       }
       project = await store.save(project);
-      json(response, 200, { ...publicProject(project), warning, assistant }); return true;
+      json(response, 200, { ...publicProject(project), warning, assistant, edit }); return true;
     } finally { locks.delete(lock); }
   };
-}
-
-function reopenDecision(doc: ProjectDocument, reason: string) {
-  if (!doc.decision) return;
-  doc.decision = null; doc.pivots = [];
-  const previous = doc.nodes.find(n => n.id === 'decision');
-  if (previous) putNote(doc, { ...previous, title: 'Decisión por revisar', body: `${reason}\n\nDecisión anterior: ${previous.body}`, status: 'open' });
 }
