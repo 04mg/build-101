@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowRight, LoaderCircle } from 'lucide-react'
 import { register, signIn } from '@/features/agent-demo/api/session'
+import { Logo } from '@/features/cruce/Logo'
 
 export function AuthPage({ initialError, onSignedIn }: { initialError?: string; onSignedIn: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -19,7 +20,7 @@ export function AuthPage({ initialError, onSignedIn }: { initialError?: string; 
   }
   function switchMode(next: 'login' | 'register') { setMode(next); setError(''); setRepeat('') }
   return <div className="access-page">
-    <div className="access-intro"><span className="brand-wordmark static">cruce</span><h1>Las buenas ideas<br />se cruzan con<br /><em>la realidad.</em></h1><p>Un cofounder para hacer las preguntas difíciles y acompañarte al próximo paso.</p><div className="access-phases"><span>Discover</span><span aria-hidden="true">→</span><span>Explore</span><span aria-hidden="true">→</span><span>Prototype</span></div></div>
+    <div className="access-intro"><span className="brand-wordmark static"><Logo /></span><h1>Las buenas ideas<br />se cruzan con<br /><em>la realidad.</em></h1><p>Un cofounder para hacer las preguntas difíciles y acompañarte al próximo paso.</p><div className="access-phases"><span>Discover</span><span aria-hidden="true">→</span><span>Explore</span><span aria-hidden="true">→</span><span>Prototype</span></div></div>
     <form className="card login-card editor-form" onSubmit={event => void submit(event)}>
       <div className="auth-tabs" role="tablist"><button type="button" role="tab" aria-selected={!registering} className={!registering ? 'active' : ''} onClick={() => switchMode('login')}>Entrar</button><button type="button" role="tab" aria-selected={registering} className={registering ? 'active' : ''} onClick={() => switchMode('register')}>Crear cuenta</button></div>
       <h2>{registering ? 'Empecemos tu proyecto.' : 'Sigamos con tu proyecto.'}</h2>

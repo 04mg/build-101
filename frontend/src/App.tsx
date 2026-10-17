@@ -6,6 +6,7 @@ import { AssistantBar } from '@/features/cruce/AssistantBar'
 import { AuthPage } from '@/features/cruce/AuthPage'
 import { DeliverableEditor } from '@/features/cruce/DeliverableEditor'
 import { DiscoverWorkspace, type DiscoverPanel } from '@/features/cruce/DiscoverWorkspace'
+import { Logo } from '@/features/cruce/Logo'
 import { MemorySearch } from '@/features/cruce/MemorySearch'
 import { NewIdea } from '@/features/cruce/NewIdea'
 import { People } from '@/features/cruce/People'
@@ -176,7 +177,7 @@ export default function App() {
   // Until the problem is defined, Discover is a focused conversation without the global bar.
   const defining = page === 'ideation' && (!project || !project.document.confirmed)
   return <div className="cruce-app">
-    <aside className="app-sidebar"><button className="brand-wordmark" aria-label="cruce, ir al recorrido" onClick={() => setPage('journey')}>cruce</button>
+    <aside className="app-sidebar"><button className="brand-wordmark" aria-label="Cruce, ir al recorrido" onClick={() => setPage('journey')}><Logo /></button>
       <ProjectMenu project={project} projects={projects} disabled={isBusy} onSelect={id => void selectProject(id)} />
       <nav className="main-navigation" aria-label="Proyecto">
         <div className={`nav-split ${page === 'journey' ? 'active' : ''}`}><button className="nav-item" aria-current={page === 'journey' ? 'page' : undefined} onClick={() => setPage('journey')}><Route size={17} />Recorrido</button><button className={`nav-chevron ${navOpen ? 'open' : ''}`} aria-label={navOpen ? 'Ocultar fases' : 'Mostrar fases'} aria-expanded={navOpen} onClick={() => setNavOpen(open => !open)}><ChevronDown size={15} /></button></div>

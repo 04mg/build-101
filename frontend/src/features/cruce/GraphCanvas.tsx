@@ -197,7 +197,7 @@ export function GraphCanvas({ notes, edges, positions, selected, onSelect, follo
       style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${28 * view.zoom}px ${28 * view.zoom}px` }}>
       <div className="canvas-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
         <svg className="graph-connections" aria-hidden="true">
-          <defs><marker id="graph-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#b2aca0" /></marker></defs>
+          <defs><marker id="graph-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" className="connection-arrow" /></marker></defs>
           {edges.map(edge => {
             const source = byId.get(edge.source), target = byId.get(edge.target)
             if (!source || !target) return null
