@@ -112,10 +112,17 @@ class Memory:
     def __init__(self) -> None:
         api_key = os.getenv("AI_API_KEY", "").strip()
         base_url = os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1").strip().rstrip("/")
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         if api_key:
             self.embedder: EmbedderClient = OpenAIEmbedder(config=OpenAIEmbedderConfig(
                 api_key=api_key, base_url=base_url, embedding_model="liquid/lfm-2.5-embedding-350m:free", embedding_dim=DIMENSIONS))
             self.embedder_name = "openrouter"
+        elif openai_key:
+            # The same key as GPT-Realtime and the experience library. Graphiti keeps the first
+            # DIMENSIONS values, which text-embedding-3 supports; cosine ignores the norm.
+            self.embedder = OpenAIEmbedder(config=OpenAIEmbedderConfig(
+                api_key=openai_key, embedding_model="text-embedding-3-small", embedding_dim=DIMENSIONS))
+            self.embedder_name = "openai"
         else:
             self.embedder = LocalHashEmbedder()
             self.embedder_name = "local"

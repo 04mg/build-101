@@ -151,7 +151,7 @@ seleccionar notas. Las relaciones se agregan desde el detalle de una nota.
 - Los cruces llegan como notificaciones Sonner (y push si el navegador las activó) con **Contactar**, **Ver nota** (abre la nota en el grafo) y **Detalle** (Personas).
 - Contactar genera con IA una solicitud anónima, tipo LinkedIn. Quien la recibe ve una notificación push y un aviso Sonner, y puede **Aceptar** o **Rechazar**. Al aceptar, ambos ven email, nombre del proyecto, problema e hipótesis con su estado.
 - Los cruces, contactos y conexiones quedan como relaciones entre proyectos en el grafo (`SAME_PROBLEM`, `SAME_HYPOTHESIS`, `PARTNERSHIP_FIT`, `CONTACTED`, `CONNECTED`). El estado (vistos, solicitudes, suscripciones push) vive en tablas `cruce_network_*` de SQLite sin record API: solo el agente las lee, así nadie ve identidades ajenas antes de aceptar.
-- `./start.sh` y `./watch.sh` arrancan la memoria con `memory/run.sh` (Docker + venv). Es opcional: sin ella la app funciona y Personas avisa que la red no está disponible. Sin `AI_API_KEY` usa embeddings locales deterministas; con ella, embeddings de OpenRouter en otro grafo.
+- `./start.sh` y `./watch.sh` arrancan la memoria con `memory/run.sh` (Docker + venv). Es opcional: sin ella la app funciona y Personas avisa que la red no está disponible. Usa embeddings de OpenRouter con `AI_API_KEY`, si no `text-embedding-3-small` de OpenAI con `OPENAI_API_KEY`, y sin ninguna, embeddings locales deterministas; cada uno en su propio grafo.
 
 ## Biblioteca de experiencias
 

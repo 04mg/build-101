@@ -6,9 +6,11 @@
 //
 // Run with TrailBase up (./start.sh): pnpm --dir agents seed
 // `pnpm --dir agents seed --update` keeps everything and only creates or
-// replaces the founders' projects from founders.json.
+// replaces the founders' projects from founders.json and accounts.json.
+// seed/data/accounts.json holds accounts captured from a live base: their
+// projects are restored exactly as the app stored them.
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -51,6 +53,11 @@ const founderSchema = z.object({
   decision: z.object({ decision: z.enum(['persevere', 'pivot', 'pause']), reason: z.string() }).optional(),
 });
 type Founder = z.infer<typeof founderSchema>;
+const accountSchema = z.object({
+  email: z.email(), password: z.string().min(8),
+  projects: z.array(z.object({ name: z.string().min(2).max(60), document: documentSchema })).min(1),
+});
+type Account = z.infer<typeof accountSchema>;
 
 function open() {
   const db = new DatabaseSync(`${root}backend/data/main.db`);
@@ -140,23 +147,31 @@ function buildDocument(founder: Founder): ProjectDocument {
 }
 
 async function seedFounder(db: DatabaseSync, founder: Founder) {
-  if (!db.prepare('SELECT 1 FROM _user WHERE email = ?').get(founder.email)) await register({ email: founder.email, password: founder.password }, config.trailbaseUrl);
-  const user = db.prepare('SELECT id FROM _user WHERE email = ?').get(founder.email) as { id: Uint8Array };
-  const doc = buildDocument(founder), now = new Date().toISOString();
-  const existing = db.prepare("SELECT id, document->>'$.revision' AS revision FROM cruce_projects WHERE owner = ? AND name = ?").get(user.id, founder.name) as { id: number; revision: number | null } | undefined;
+  await seedProject(db, founder, founder.name, buildDocument(founder));
+}
+
+async function seedAccount(db: DatabaseSync, account: Account) {
+  for (const project of account.projects) await seedProject(db, account, project.name, project.document);
+}
+
+async function seedProject(db: DatabaseSync, account: { email: string; password: string }, name: string, doc: ProjectDocument) {
+  if (!db.prepare('SELECT 1 FROM _user WHERE email = ?').get(account.email)) await register({ email: account.email, password: account.password }, config.trailbaseUrl);
+  const user = db.prepare('SELECT id FROM _user WHERE email = ?').get(account.email) as { id: Uint8Array };
+  const now = new Date().toISOString();
+  const existing = db.prepare("SELECT id, document->>'$.revision' AS revision FROM cruce_projects WHERE owner = ? AND name = ?").get(user.id, name) as { id: number; revision: number | null } | undefined;
   // Replacing a project is one more revision of it, as the app's own saves are.
   if (existing) doc.revision = (existing.revision ?? 0) + 1;
-  const projectId = existing?.id ?? Number(db.prepare('INSERT INTO cruce_projects(owner, name, document, updated_at) VALUES (?, ?, ?, ?)').run(user.id, founder.name, JSON.stringify(doc), now).lastInsertRowid);
+  const projectId = existing?.id ?? Number(db.prepare('INSERT INTO cruce_projects(owner, name, document, updated_at) VALUES (?, ?, ?, ?)').run(user.id, name, JSON.stringify(doc), now).lastInsertRowid);
   if (existing) {
     db.prepare('UPDATE cruce_projects SET document = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(doc), now, projectId);
     // The app projects it again (and looks for crossings) the next time it is opened.
     db.prepare('DELETE FROM cruce_network_scans WHERE project_id = ?').run(projectId);
   }
   const owner = subject(user.id);
-  db.prepare('INSERT INTO cruce_network_profiles(user_id, email, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email = excluded.email').run(owner, founder.email, now);
+  db.prepare('INSERT INTO cruce_network_profiles(user_id, email, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email = excluded.email').run(owner, account.email, now);
   // Projection only, like the app's backfill: crossings appear when founders use the app.
-  await memory('/projects/upsert', { owner, projectId, name: founder.name, notes: networkNotes(doc) }).catch(() => undefined);
-  console.log(`  ${founder.email.padEnd(36)} ${founder.name}${existing ? ' (actualizado)' : ''}`);
+  await memory('/projects/upsert', { owner, projectId, name, notes: networkNotes(doc) }).catch(() => undefined);
+  console.log(`  ${account.email.padEnd(36)} ${name}${existing ? ' (actualizado)' : ''}`);
 }
 
 async function main() {
@@ -166,12 +181,14 @@ async function main() {
   });
   const unique = [...new Map(experiences.map(e => [e.id, e])).values()];
   const founders = z.array(founderSchema).parse(JSON.parse(readFileSync(`${dataDir}founders.json`, 'utf8')));
+  const accounts = existsSync(`${dataDir}accounts.json`) ? z.array(accountSchema).parse(JSON.parse(readFileSync(`${dataDir}accounts.json`, 'utf8'))) : [];
 
   const db = open();
   if (process.argv.includes('--update')) {
     for (const founder of founders) await seedFounder(db, founder);
+    for (const account of accounts) await seedAccount(db, account);
     db.close();
-    console.log(`\nListo: ${founders.length} founders actualizados, sin tocar el resto de la base.`);
+    console.log(`\nListo: ${founders.length + accounts.length} founders actualizados, sin tocar el resto de la base.`);
     return;
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -205,8 +222,9 @@ async function main() {
 
   // Founders: real accounts through TrailBase, projects in the shape the app writes.
   for (const founder of founders) await seedFounder(db, founder);
+  for (const account of accounts) await seedAccount(db, account);
   db.close();
-  console.log(`\nListo: ${founders.length} founders y ${unique.length} experiencias. Contraseña de cada cuenta en seed/data/founders.json.`);
+  console.log(`\nListo: ${founders.length + accounts.length} founders y ${unique.length} experiencias. Contraseña de cada cuenta en seed/data/founders.json y accounts.json.`);
 }
 
 main().catch(error => { console.error(error); process.exit(1); });
