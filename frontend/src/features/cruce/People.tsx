@@ -14,8 +14,8 @@ export function People({ network, focus, chat, onChat, onSearch, onJourney, onOp
   const incoming = state?.requests.filter(r => r.direction === 'incoming' && r.status === 'pending') ?? []
   const connections = (state?.requests.filter(r => r.status === 'accepted') ?? []).sort((a, b) => activity(b).localeCompare(activity(a)))
   const conversation = connections.find(r => r.id === chat)
-  // An accepted crossing is shown once, as its connection.
-  const open = (state?.matches ?? []).filter(m => m.request?.status !== 'accepted')
+  // An accepted crossing is shown once, as its connection; an incoming one, as its request.
+  const open = (state?.matches ?? []).filter(m => m.request?.status !== 'accepted' && !(m.request?.direction === 'incoming' && m.request.status === 'pending'))
   const matches = open.filter(m => filter === 'Todas' || matchLabels[m.type].filter === filter)
   const empty = !incoming.length && !connections.length && !open.length
 
