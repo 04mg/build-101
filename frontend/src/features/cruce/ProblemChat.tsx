@@ -4,10 +4,12 @@ import { GraphCanvas } from './GraphCanvas'
 import type { Project, Question } from './types'
 import { useVoiceInput } from './useVoiceInput'
 import { VoiceInputButton } from './VoiceInputButton'
+import { useConfirm } from './ConfirmDialog'
+import { IntakeMicButton, IntakeVoiceStage, intakeVoiceLabel, type IntakeVoice } from './IntakeVoice'
 
 // Discover's first step: the cofounder grills the founder until the problem is defined.
-export function ProblemChat({ project, busy, onAnswer, onAction }: {
-  project: Project; busy: string;
+export function ProblemChat({ project, busy, voice: realtime, onAnswer, onAction }: {
+  project: Project; busy: string; voice: IntakeVoice;
   onAnswer: (value: string, question: Question) => Promise<boolean>; onAction: (action: Record<string, unknown>) => Promise<Project | null>;
 }) {
   const doc = project.document, question = doc.question
@@ -22,6 +24,11 @@ export function ProblemChat({ project, busy, onAnswer, onAction }: {
   const [draft, setDraft] = useState(problem?.body ?? '')
   const notes = doc.nodes.filter(n => (n.phase ?? 'discover') === 'discover' && n.kind !== 'deliverable')
   const thread = useRef<HTMLDivElement>(null)
+  const confirm = useConfirm()
+  // Questions after the idea: GPT-Realtime asks at most two, the Claude chat at most three.
+  const followUps = doc.intake?.engine === 'realtime' ? 2 : 3
+  // By voice the stage stays put for the whole conversation: nothing appears or disappears around the orb.
+  const stage = realtime.enabled && realtime.voice
   useEffect(() => { thread.current?.scrollTo({ top: thread.current.scrollHeight, behavior: 'smooth' }) }, [doc.answers.length, pending, question?.id])
 
   async function send(value: string) {
@@ -39,7 +46,7 @@ export function ProblemChat({ project, busy, onAnswer, onAction }: {
     if (await onAction({ action: 'rewind', index })) setInput(previous)
   }
   async function restart() {
-    if (busy || pending || !window.confirm('¿Reiniciar la conversación? Se borran las respuestas y el mapa.')) return
+    if (busy || pending || !await confirm({ title: '¿Reiniciar la conversación?', message: 'Se borran las respuestas y el mapa de este problema. No se puede deshacer.', confirmLabel: 'Reiniciar', danger: true })) return
     if (await onAction({ action: 'rewind', index: 0 })) { setInput(''); setSelected(null); setEditing(false) }
   }
   function submit(event?: FormEvent) { event?.preventDefault(); const text = voice.stop(); void send(text) }
@@ -50,13 +57,17 @@ export function ProblemChat({ project, busy, onAnswer, onAction }: {
 
   return <div className="define-layout">
     <section className="problem-chat" aria-label="Definir el problema con tu cofounder">
-      <header className="problem-chat-heading"><strong>Definí el problema</strong><div className="problem-chat-actions">{canAnswer && <span className="chat-step">Pregunta {Math.min(doc.answers.length, 3)} de 3</span>}<button className="text-button chat-restart" disabled={Boolean(busy) || Boolean(pending) || !doc.answers.length} onClick={() => void restart()} title="Empezar de nuevo"><RotateCcw size={13} />Reiniciar</button></div></header>
-      {doc.research.status === 'running' && <div className="chat-research-status" role="status"><LoaderCircle size={12} className="spin" />Buscando contexto y alternativas en paralelo…</div>}
+      <header className="problem-chat-heading"><strong>Definí el problema</strong><div className="problem-chat-actions">{canAnswer && !stage && <span className="chat-step">Pregunta {Math.min(doc.answers.length, followUps)} de {followUps}</span>}<button className="text-button chat-restart" disabled={Boolean(busy) || Boolean(pending) || !doc.answers.length} onClick={() => void restart()} title="Empezar de nuevo"><RotateCcw size={13} />Reiniciar</button></div></header>
+      {doc.research.status === 'running' && !stage && <div className="chat-research-status" role="status"><LoaderCircle size={12} className="spin" />Buscando contexto y alternativas en paralelo…</div>}
+      {/* By voice there are no bubbles: the cofounder writes what it says. The chat path keeps the thread. */}
+      {stage ? <><IntakeVoiceStage voice={realtime} />
+        <div className="intake-stage-controls"><IntakeMicButton voice={realtime} disabled={false} /></div></> : <>
       <div className="chat-thread" ref={thread}>
         {doc.answers.map((answer, i) => <div key={answer.questionId + i} className="chat-turn">
           {i > 0 && <AgentBubble><p className="chat-prompt">{answer.prompt}</p></AgentBubble>}
           <div className="chat-answer"><button className="chat-rewind" disabled={Boolean(busy) || Boolean(pending)} onClick={() => void rewind(i)} aria-label="Volver a esta pregunta" title="Volver a esta pregunta"><Undo2 size={13} /></button><div className="chat-bubble user">{answer.value}</div></div>
         </div>)}
+        {canAnswer && doc.intake?.status === 'idle' && doc.intake.message && <AgentBubble><p>{doc.intake.message}</p></AgentBubble>}
         {canAnswer && question && <AgentBubble><p className="chat-prompt">{question.prompt}</p></AgentBubble>}
         {pending && <div className="chat-answer"><div className="chat-bubble user">{pending}</div></div>}
         {(pending || processing || busy === 'thinking') && <div className="chat-agent"><span className="cofounder-avatar">A</span><div className="chat-bubble agent typing" role="status"><LoaderCircle size={14} className="spin" />{doc.intake?.message || 'Pensando…'}</div></div>}
@@ -71,7 +82,8 @@ export function ProblemChat({ project, busy, onAnswer, onAction }: {
           <div className="phase-complete"><Check size={16} /><span>Completaste esta fase.</span><button className="primary" disabled={Boolean(busy) || editing} onClick={() => void onAction({ action: 'confirm' })}>{busy ? <LoaderCircle size={14} className="spin" /> : null}Continuar<ArrowRight size={14} /></button></div>
         </AgentBubble>}
       </div>
-      {question && !failed && <><form className={`chat-composer ${voice.listening ? 'voice-active' : ''}`} onSubmit={submit}><textarea aria-label="Tu respuesta" aria-live={voice.listening ? 'polite' : 'off'} rows={1} maxLength={3999} value={input} onChange={event => { voice.stop(); setInput(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={processing ? 'Tu respuesta está guardada. Preparando el siguiente paso…' : voice.listening ? 'Te escucho…' : question.placeholder || 'Escribí tu respuesta…'} disabled={Boolean(busy) || !canAnswer} /><VoiceInputButton voice={voice} disabled={Boolean(busy) || !canAnswer} /><button className="assistant-send" aria-label="Enviar" disabled={Boolean(busy) || !canAnswer || !input.trim()}>{busy ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={19} />}</button></form>{voice.listening && <p className="voice-input-status" role="status">Escuchando · el texto aparece en vivo. Revisalo y envialo cuando quieras.</p>}{voice.error && <p className="voice-input-status error" role="alert">{voice.error}</p>}</>}
+      {question && !failed && <><form className={`chat-composer ${voice.listening ? 'voice-active' : ''}`} onSubmit={submit}><textarea aria-label="Tu respuesta" aria-live={voice.listening ? 'polite' : 'off'} rows={1} maxLength={3999} value={input} onChange={event => { voice.stop(); setInput(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder={processing ? 'Tu respuesta está guardada. Preparando el siguiente paso…' : voice.listening ? 'Te escucho…' : question.placeholder || 'Escribí tu respuesta…'} disabled={Boolean(busy) || !canAnswer} />{realtime.enabled ? <IntakeMicButton voice={realtime} disabled={Boolean(busy) || (!canAnswer && !realtime.voice)} /> : <VoiceInputButton voice={voice} disabled={Boolean(busy) || !canAnswer} />}<button className="assistant-send" aria-label="Enviar" disabled={Boolean(busy) || !canAnswer || !input.trim()}>{busy ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={19} />}</button></form>{voice.listening && <p className="voice-input-status" role="status">Escuchando · el texto aparece en vivo. Revisalo y envialo cuando quieras.</p>}{realtime.voice && <p className="voice-input-status" role="status">En vivo · {intakeVoiceLabel(realtime)}</p>}{(realtime.error || voice.error) && <p className="voice-input-status error" role="alert">{realtime.error || voice.error}</p>}</>}
+      </>}
     </section>
     <section className="define-graph fill-canvas" aria-label="Mapa del problema">
       <GraphCanvas key={project.id} notes={notes} edges={doc.edges} positions={doc.positions} selected={selected} onSelect={setSelected} follow onMove={(id, position) => void onAction({ action: 'layout', positions: { [id]: position } })} />

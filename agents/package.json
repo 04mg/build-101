@@ -8,14 +8,17 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file-if-exists=../.env dist/server.js",
-    "dev": "node --env-file-if-exists=../.env --import tsx --watch src/server.ts"
+    "dev": "node --env-file-if-exists=../.env --import tsx --watch src/server.ts",
+    "seed": "node --env-file-if-exists=../.env --import tsx scripts/seed.ts"
   },
   "dependencies": {
     "http-proxy-middleware": "^4.2.0",
+    "web-push": "^3.6.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/web-push": "^3.6.4",
     "tsx": "^4.0.0",
     "typescript": "~6.0.2"
   }

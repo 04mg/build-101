@@ -79,12 +79,19 @@ pids+=("$AGENT_PID")
 FRONTEND_PID=$!
 pids+=("$FRONTEND_PID")
 
+# The founder network memory is optional: if it stops, the app keeps running.
+core_pids=("${pids[@]}")
+if [[ "${ENABLE_MEMORY:-1}" != 0 ]]; then
+  bash memory/run.sh >.run/memory.log 2>&1 9>&- &
+  pids+=("$!")
+fi
+
 printf '\n%s◆ Assistant%s\n\n' "$BOLD$CYAN" "$RESET"
 say "$GREEN" "✓ Frontend  http://localhost:5173  ·  live reload"
 say "$GREEN" "✓ Agent API http://localhost:$APP_PORT  ·  restarts on save"
 printf '\n%sPress Ctrl+C to stop.%s\n\n' "$DIM" "$RESET"
 set +e
-wait -n "${pids[@]}"
+wait -n "${core_pids[@]}"
 status=$?
 set -e
 say "$RED" "✗ A development process exited (status $status); check .run/ logs." >&2

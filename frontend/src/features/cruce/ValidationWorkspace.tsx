@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, ClipboardList, Copy, Mic, Plus, Square, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CircleDashed, ClipboardList, Copy, LoaderCircle, Mic, Plus, Square, Trash2, X } from 'lucide-react'
 import { canExplore, currentAssessment, hypothesisRejected, hypothesisValidated, validationCounts, type Project, type SurveyDraft, type SurveyQuestion, type ValidationPlan } from './types'
 
 type Action = (action: Record<string, unknown>) => Promise<Project | null>
@@ -17,15 +17,15 @@ export function ValidationWorkspace({ project, busy, onAction, onSelect, active,
       const item = project.document.validation?.find(p => p.hypothesisId === note.id), counts = validationCounts(item), validated = hypothesisValidated(project, note.id), rejected = hypothesisRejected(project, note.id)
       return <button key={note.id} className={`validation-check-item ${validated ? 'validated' : rejected ? 'rejected' : ''}`} onClick={() => onOpen(note.id)}>
         {validated || rejected ? <HypothesisResult validated={validated} /> : <span className="validation-check" aria-hidden="true">{i + 1}</span>}
-        <span className="validation-item-text"><strong>{note.body}</strong><small>{validated ? 'Validada' : rejected ? 'No validada' : 'Por contrastar'} · {counts.surveys} encuesta{counts.surveys === 1 ? '' : 's'} · {counts.interviews} entrevista{counts.interviews === 1 ? '' : 's'}</small></span><ArrowRight size={15} />
+        <span className="validation-item-text"><strong>{note.body}</strong>{!validated && !rejected && <span className="note-badge pending"><CircleDashed size={12} strokeWidth={2.4} aria-hidden="true" />Por contrastar</span>}<small>{counts.surveys} encuesta{counts.surveys === 1 ? '' : 's'} · {counts.interviews} entrevista{counts.interviews === 1 ? '' : 's'}</small></span><ArrowRight size={15} />
       </button>
     })}</div>
     {canExplore(project) && <button className="primary validation-continue" disabled={Boolean(busy)} onClick={() => void onAction({ action: 'phase', phase: 'explore' })}>Continuar a Explore<ArrowRight size={15} /></button>}
   </div>
 }
 
-function ValidationGauge({ percent }: { percent: number }) {
-  return <div className="validation-gauge" role="meter" aria-label="Avance de validación" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+export function ValidationGauge({ percent, label = 'Avance de validación' }: { percent: number; label?: string }) {
+  return <div className="validation-gauge" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
     <svg viewBox="0 0 240 155" aria-hidden="true">
       <path d="M 25 112 A 95 95 0 0 1 215 112" className="gauge-track" pathLength="100" />
       <path d="M 25 112 A 95 95 0 0 1 215 112" className="gauge-fill" pathLength="100" strokeDasharray={`${percent} 100`} />
@@ -38,17 +38,18 @@ function HypothesisValidation({ plan, project, busy, onAction, onBack, onSelect 
   const [tab, setTab] = useState<'survey' | 'interview' | 'results'>('survey'), [copied, setCopied] = useState(false)
   const note = project.document.nodes.find(n => n.id === plan.hypothesisId)!, counts = validationCounts(plan), validated = hypothesisValidated(project, plan.hypothesisId)
   const rejected = hypothesisRejected(project, plan.hypothesisId), assessment = currentAssessment(project, plan)
-  const canValidate = assessment?.verdict === 'supports' && counts.surveys > 0 && counts.interviews > 0
+  const canValidate = assessment?.verdict === 'supports' && (counts.surveys > 0 || counts.interviews > 0)
   const ready = plan.instrumentStatus === 'ready' && plan.instrumentVersion >= 3
   const hasInsight = project.document.nodes.some(n => plan.insightIds?.includes(n.id) && n.discovery)
   const url = `${window.location.origin}/s/${plan.survey.token}`
   return <div className="hypothesis-validation">
     <button className="text-button" onClick={onBack}><ArrowLeft size={14} />Hipótesis</button>
     {(validated || rejected) && <HypothesisResult validated={validated} />}
-    <div className="validation-detail-heading"><span className="eyebrow">{note.title}</span><button className="text-button" onClick={() => onSelect(note.id)}>Editar nota<ArrowRight size={12} /></button></div>
-    <h2>{note.body}</h2><details className="validation-criterion"><summary>Qué vamos a contrastar</summary><p>{plan.criterion}</p></details>
+    <div className="validation-detail-heading"><h2>{note.title}</h2><button className="text-button" onClick={() => onSelect(note.id)}>Editar nota<ArrowRight size={12} /></button></div>
+    <p className="validation-hypothesis-body">{note.body}</p><details className="validation-criterion"><summary>Qué vamos a contrastar</summary><p>{plan.criterion}</p></details>
     <div className="validation-tabs" role="tablist" aria-label="Validación">{([['survey', 'Encuesta'], ['interview', 'Entrevistas'], ['results', 'Resultados']] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
-    {!ready && tab !== 'results' && <section className="validation-assessment"><h3>Instrumentos pendientes de generación</h3><p>{plan.instrumentError ?? 'La IA debe preparar preguntas específicas para esta hipótesis antes de compartir la encuesta o realizar entrevistas.'}</p><button disabled={Boolean(busy)} onClick={() => void onAction({ action: 'generate-validation', hypothesisId: plan.hypothesisId })}>{busy ? 'Generando y revisando…' : 'Generar con IA'}</button></section>}
+    {!ready && tab !== 'results' && plan.instrumentStatus === 'pending' && <section className="validation-assessment" role="status"><h3><LoaderCircle size={14} className="spin" /> Generando encuesta y entrevista…</h3><p>La IA está preparando y revisando preguntas específicas para esta hipótesis. Se actualiza solo; podés seguir trabajando mientras tanto.</p></section>}
+    {!ready && tab !== 'results' && plan.instrumentStatus !== 'pending' && <section className="validation-assessment"><h3>Instrumentos pendientes de generación</h3><p>{plan.instrumentError ?? 'La IA debe preparar preguntas específicas para esta hipótesis antes de compartir la encuesta o realizar entrevistas.'}</p><button disabled={Boolean(busy)} onClick={() => void onAction({ action: 'generate-validation', hypothesisId: plan.hypothesisId })}>{busy ? 'Generando y revisando…' : 'Generar con IA'}</button></section>}
     {ready && tab === 'survey' && <><div className="survey-share"><label>Link público<input readOnly value={url} onFocus={e => e.target.select()} /></label><div><button onClick={() => void navigator.clipboard.writeText(url).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 2000) }).catch(() => setCopied(false))}><Copy size={13} />{copied ? 'Copiado' : 'Copiar'}</button><a href={url} target="_blank" rel="noreferrer">Abrir encuesta ↗</a></div></div><SurveyEditor key={plan.survey.version} plan={plan} busy={busy} onAction={onAction} /></>}
     {ready && tab === 'interview' && <InterviewEditor key={`${plan.epoch}-${plan.survey.version}`} plan={plan} busy={busy} onAction={onAction} />}
     {tab === 'results' && <ValidationResults plan={plan} project={project} onSelect={onSelect} />}
@@ -57,12 +58,12 @@ function HypothesisValidation({ plan, project, busy, onAction, onBack, onSelect 
       {canValidate ? <button className="validation-approve validated" disabled={Boolean(busy) || validated} onClick={() => void onAction({ action: 'validate-hypothesis', hypothesisId: plan.hypothesisId, validated: true })}><Check size={19} />{validated ? 'Hipótesis validada' : 'Validar hipótesis'}</button>
         : assessment && assessment.verdict !== 'supports' && (hasInsight || assessment.verdict === 'contradicts') && <button className="validation-approve rejected" disabled={Boolean(busy) || rejected} onClick={() => void onAction({ action: 'validate-hypothesis', hypothesisId: plan.hypothesisId, validated: false })}><X size={19} />{rejected ? 'Hipótesis no validada' : 'No validar'}</button>}
       {ready && Boolean(counts.surveys || counts.interviews || plan.survey.responses.length) && <button className="text-button validation-reassess" disabled={Boolean(busy)} onClick={() => void onAction({ action: 'assess-hypothesis', hypothesisId: plan.hypothesisId })}>{busy ? 'Evaluando…' : assessment ? 'Reevaluar con IA' : 'Evaluar con IA'}</button>}
-      <p>Validar requiere una evaluación favorable de la IA, al menos una respuesta a la encuesta actual y una entrevista. La nueva evidencia vuelve a evaluar el resultado.</p>
+      <p>Validar requiere una evaluación favorable de la IA y al menos una respuesta a la encuesta actual o una entrevista con un insight claro. La nueva evidencia vuelve a evaluar el resultado.</p>
     </div>
   </div>
 }
 
-function HypothesisResult({ validated }: { validated: boolean }) {
+export function HypothesisResult({ validated }: { validated: boolean }) {
   return <span className={`hypothesis-result ${validated ? 'validated' : 'rejected'}`} role="img" aria-label={validated ? 'Hipótesis validada' : 'Hipótesis no validada'}>{validated ? <Check size={40} strokeWidth={3} /> : <X size={40} strokeWidth={3} />}</span>
 }
 

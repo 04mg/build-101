@@ -128,19 +128,16 @@ export function EvidenceForm({ project, busy, onBack, onSave, hypothesisId }: { 
   </form>
 }
 
-export function NotePanel({ note, project, busy, onClose, onSelect, onSave, onEvidence }: { note: KnowledgeNote; project: Project; busy: string; onClose: () => void; onSelect: (id: string) => void; onSave: Props['onAction']; onEvidence: (id: string) => void }) {
-  const [title, setTitle] = useState(note.title), [body, setBody] = useState(note.body), [target, setTarget] = useState('')
-  const [discovery, setDiscovery] = useState(note.discovery)
-  const editedBody = discovery ? `Observación\n${discovery.observation}\n\nInsight\n${discovery.insight}\n\nOportunidad (HMW)\n${discovery.opportunity}` : body
+export function NotePanel({ note, project, busy, onClose, onSelect, onEvidence }: { note: KnowledgeNote; project: Project; busy: string; onClose: () => void; onSelect: (id: string) => void; onSave: Props['onAction']; onEvidence: (id: string) => void }) {
   const nodes = project.document.nodes, edges = project.document.edges
   const isSource = (id: string) => nodes.some(n => n.id === id && n.kind === 'source')
   const sources = note.kind === 'source' ? [] : nodes.filter(n => n.kind === 'source' && edges.some(e => (e.source === n.id && e.target === note.id) || (e.target === n.id && e.source === note.id)))
   const connections = edges.filter(e => (e.source === note.id || e.target === note.id) && (note.kind === 'source' || !isSource(e.source === note.id ? e.target : e.source)))
-  return <div className="journey-panel note-detail"><div className="detail-heading"><span className="panel-kicker">{note.kind === 'source' ? 'Aporte de la fuente' : 'En tu mapa'}</span><button className="icon-button" aria-label="Cerrar nota" onClick={onClose}><X size={16} /></button></div>
-    <span className={`note-status ${note.status}`}>{statusLabels[note.status]}</span>
+  return <div className="journey-panel note-detail"><div className="detail-heading"><span className={`note-status ${note.status}`}>{statusLabels[note.status]}</span><button className="icon-button" aria-label="Cerrar nota" onClick={onClose}><X size={16} /></button></div>
     {note.inheritedFrom && <p className="input-hint">⑂ Contexto heredado del proyecto #{note.inheritedFrom.projectId}. Su alcance original se conserva.</p>}
     {note.kind === 'source' ? <><h2>{note.title}</h2><p className="source-contribution">{sourceContribution(note, project.document.nodes, project.document.edges)}</p>{note.url && <a className="source-link" href={note.url} target="_blank" rel="noreferrer">Abrir fuente ↗</a>}<details className="source-original"><summary>Ver contenido original</summary><p className="source-content">{note.quote || note.body}</p></details><p className="input-hint">Consultada {formatDate(note.updatedAt)}{note.publishedAt ? ` · Publicada ${formatDate(note.publishedAt)}` : ''}</p></> :
-      <form className="editor-form" onSubmit={e => { e.preventDefault(); void onSave({ action: 'note', id: note.id, title, body: editedBody, ...(discovery ? { discovery } : {}) }) }}><label>Título<input required maxLength={180} value={title} onChange={e => setTitle(e.target.value)} /></label>{discovery ? <>{([['observation', 'Observación', 700], ['insight', 'Insight', 700], ['opportunity', 'Oportunidad (HMW)', 450]] as const).map(([key, label, limit]) => <label key={key}>{label}<textarea required minLength={10} maxLength={limit} rows={4} value={discovery[key]} onChange={e => setDiscovery(d => d ? { ...d, [key]: e.target.value } : d)} /></label>)}</> : <label>Contenido<textarea required maxLength={4000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label>}<button disabled={Boolean(busy) || !title.trim() || !editedBody.trim() || (title === note.title && editedBody === note.body)}>Guardar cambios</button></form>}
+      // Notes are read-only here: the cofounder and the evidence flows change them.
+      <><h2>{note.title}</h2>{note.discovery ? ([['observation', 'Observación'], ['insight', 'Insight'], ['opportunity', 'Oportunidad (HMW)']] as const).map(([key, label]) => <div key={key}><div className="section-title">{label}</div><p className="note-body">{note.discovery![key]}</p></div>) : <p className="note-body">{note.body}</p>}</>}
     {note.kind === 'hypothesis' && <button className="primary" disabled={Boolean(busy)} onClick={() => onEvidence(note.id)}>Encuesta y entrevistas <ArrowRight size={13} /></button>}
     {(note.rationale || sources.length > 0) && <section className="note-research"><div className="section-title"><span>{note.rationale ? 'Por qué cambió' : 'Fuentes'}</span><span>{sources.length}</span></div>
           {note.rationale && <p>{note.rationale}</p>}
@@ -149,7 +146,7 @@ export function NotePanel({ note, project, busy, onClose, onSelect, onSave, onEv
     <section className="related-notes"><div className="section-title">Conexiones</div>{connections.map(edge => {
       const other = project.document.nodes.find(n => n.id === (edge.source === note.id ? edge.target : edge.source))
       return other ? <button className="text-button related-link" key={edge.id} onClick={() => onSelect(other.id)}>{other.title} <ArrowRight size={12} /></button> : null
-    })}<div className="connect-note"><select aria-label="Relacionar con otra nota" value={target} onChange={e => setTarget(e.target.value)}><option value="">Relacionar con…</option>{project.document.nodes.filter(n => n.id !== note.id).map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select><button className="icon-button" aria-label="Crear relación" disabled={!target || Boolean(busy)} onClick={() => void onSave({ action: 'relation', source: note.id, target, relation: 'related' }).then(result => { if (result) setTarget('') })}>＋</button></div></section>
+    })}</section>
     {note.history.length > 0 && <details className="answer-history"><summary>Versiones anteriores · {note.history.length}</summary>{[...note.history].reverse().map((revision, i) => <div key={i}><strong>{formatDate(revision.at)} · {statusLabels[revision.status]}</strong><p>{revision.body}</p></div>)}</details>}
   </div>
 }

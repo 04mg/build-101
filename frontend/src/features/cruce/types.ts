@@ -54,7 +54,7 @@ export function validationCounts(plan?: ValidationPlan) {
 export function hypothesisValidated(project: Project, id: string) {
   const plan = project.document.validation?.find(p => p.hypothesisId === id), note = project.document.nodes.find(n => n.id === id)
   const counts = validationCounts(plan)
-  return Boolean(plan?.validatedAt && plan.hypothesisBody === note?.body && note.status === 'supported' && counts.surveys && counts.interviews && currentAssessment(project, plan)?.verdict === 'supports')
+  return Boolean(plan?.validatedAt && plan.hypothesisBody === note?.body && note.status === 'supported' && (counts.surveys || counts.interviews) && currentAssessment(project, plan)?.verdict === 'supports')
 }
 export function validationEvidenceKey(project: Project, plan: ValidationPlan) {
   const doc = project.document
@@ -72,7 +72,8 @@ export function hypothesisRejected(project: Project, id: string) {
 }
 export function canExplore(project: Project | null) {
   const hypotheses = project?.document.nodes.filter(n => n.kind === 'hypothesis') ?? []
-  return Boolean(project?.document.confirmed && hypotheses.length === 3 && hypotheses.every(n => hypothesisValidated(project, n.id)))
+  // One validated hypothesis is enough to move on (lighter gate for demos).
+  return Boolean(project?.document.confirmed && hypotheses.some(n => hypothesisValidated(project, n.id)))
 }
 export interface ProjectDocument {
   version: 1
@@ -90,26 +91,48 @@ export interface ProjectDocument {
   parent: { projectId: number; name: string } | null
   assistant?: AssistantTurn[]
   validation: ValidationPlan[]
-  intake: { status: 'idle' | 'running' | 'error'; id: string | null; questionId: string | null; message: string; startedAt: string | null }
+  intake: { status: 'idle' | 'running' | 'error'; id: string | null; questionId: string | null; message: string; startedAt: string | null; engine?: 'claude' | 'realtime' }
+  explore: ExploreState
+  prototype: PrototypeState
+}
+export interface MatrixScore { criterionId: string; score: number | null; note: string }
+export interface MatrixRow { id: string; type: 'current' | 'competitor' | 'solution'; name: string; summary: string; url: string | null; hmw: string | null; scores: MatrixScore[] }
+type JobState = { status: 'idle' | 'running' | 'ready' | 'error'; error: string | null; at: string | null }
+export interface ExploreState extends JobState { task: 'matrix' | 'deliverables'; criteria: { id: string; label: string; insightId: string | null }[]; rows: MatrixRow[]; chosenId: string | null }
+export interface LandingHypothesis {
+  id: string; statement: string; signal: string; criterion: string
+  assessment: { verdict: 'supports' | 'contradicts' | 'insufficient'; reason: string; statsKey: string; at: string } | null
+  decision: 'validated' | 'rejected' | null; decidedAt: string | null
+}
+export interface PrototypeState extends JobState {
+  task: 'landing' | 'iterate'; solutionId: string | null; token: string | null; hasLanding: boolean; version: number; pending: string | null
+  chat: { role: 'founder' | 'cofounder'; text: string; at: string }[]; hypotheses: LandingHypothesis[]
+}
+export interface LandingStats { visits: number; leads: { id: string; at: string; fields: Record<string, string> }[] }
+export function chosenSolution(project: Project | null) {
+  const explore = project?.document.explore
+  return explore?.rows.find(r => r.type === 'solution' && r.id === explore.chosenId)
 }
 export interface Point { x: number; y: number }
 export interface AssistantReply { message: string; destination: 'ideation' | 'timeline' | 'people' | 'evidence' | 'research'; phase: PhaseId }
 export interface AssistantTurn extends AssistantReply { question: string; at: string }
 /** A note the assistant is about to change; `at` is where a new note will appear. */
 export interface EditTarget { op: 'update' | 'create' | 'delete' | 'link' | 'unlink'; id: string; at?: Point }
-export interface AssistantEdit { question: string; plan: string; targets: EditTarget[] }
-export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; assistant?: AssistantReply; edit?: AssistantEdit; activity?: { action: string; startedAt: string } | null }
+/** An edit_map operation from GPT-Realtime, applied by the server. */
+export interface EditOperation { op: EditTarget['op']; id: string; target?: string; kind?: string; title?: string; body?: string; relation?: string; discovery?: unknown; at?: Point }
+export interface AssistantEdit { done: string[]; rejected: string[]; touched: string[] }
+export interface Project { id: number; name: string; document: ProjectDocument; updatedAt: string; progress: number; phaseProgress: Record<PhaseId, number>; overallProgress: number; warning?: string; edit?: AssistantEdit; activity?: { action: string; startedAt: string } | null }
 export function projectBusy(project: Project | null) {
   if (project?.document.intake?.status === 'running') return 'thinking'
   if (project?.activity) return project.activity.action === 'research' ? 'research' : 'thinking'
   return ''
 }
 export interface ProjectSummary { id: number; name: string; progress: number; phaseProgress?: Record<PhaseId, number>; activePhase?: PhaseId; parent: ProjectDocument['parent'] }
-export interface Capabilities { ai: boolean; research: boolean; semanticMemory: boolean }
+export interface Capabilities { ai: boolean; realtime: boolean; research: boolean; semanticMemory: boolean }
 export interface MemoryHit { projectId: number; note: KnowledgeNote; score: number }
 
 export const kindLabels: Record<NoteKind, string> = {
-  problem: 'Problema', segment: 'Personas', alternative: 'Soluciones actuales', impact: 'Consecuencia',
+  problem: 'Problema', segment: 'Personas afectadas', alternative: 'Soluciones actuales', impact: 'Consecuencia',
   hypothesis: 'Hipótesis', source: 'Fuente', insight: 'Aprendizaje', experiment: 'Experimento',
   evidence: 'Evidencia', decision: 'Decisión', note: 'Nota',
   deliverable: 'Entregable',

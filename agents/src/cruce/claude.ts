@@ -11,6 +11,8 @@ import type { Config } from '../config.js';
 // fresh, sessionless run with no built-in tools, no project settings and a JSON
 // schema for the answer. Research runs additionally get Exa as an MCP server.
 export const CLAUDE_MODEL = 'claude-haiku-5-5';
+// Landing pages are written by Sonnet: longer, design-heavy output.
+export const LANDING_MODEL = 'claude-sonnet-5-5';
 
 const workdir = mkdtempSync(join(tmpdir(), 'cruce-claude-'));
 let exaConfig: string | undefined;
@@ -28,7 +30,7 @@ export class ClaudeError extends Error {
 }
 
 type ClaudeRequest<T extends z.ZodType> = {
-  system: string; prompt: string; schema: T; web?: boolean; timeoutMs?: number; attempts?: number;
+  system: string; prompt: string; schema: T; web?: boolean; timeoutMs?: number; attempts?: number; model?: string;
   validateOutput?: (output: z.infer<T>) => void | Promise<void>;
 };
 
@@ -39,7 +41,7 @@ export async function runClaude<T extends z.ZodType>(config: Config, request: Cl
     if (shutdown.signal.aborted) throw new ClaudeError('shutdown', 'El servicio se está reiniciando. Reintentá en unos segundos.');
     try {
       const result = await runClaudeAttempt(config, { ...request,
-        timeoutMs: Math.min(240000, (request.timeoutMs ?? 90000) + attempt * 15000),
+        timeoutMs: Math.min(request.model ? 360000 : 240000, (request.timeoutMs ?? 90000) + attempt * 15000),
         prompt: feedback ? `${request.prompt}\n\nCONTROL DE CALIDAD DEL INTENTO ANTERIOR (corregí la salida, no lo incluyas en el contenido final):\n${feedback}` : request.prompt,
       });
       await request.validateOutput?.(result.output);
@@ -54,8 +56,8 @@ export async function runClaude<T extends z.ZodType>(config: Config, request: Cl
   throw new ClaudeError('run_failed', 'No se pudo completar la generación. Podés reintentar.');
 }
 
-async function runClaudeAttempt<T extends z.ZodType>(config: Config, { system, prompt, schema, web = false, timeoutMs = 90000 }: ClaudeRequest<T>): Promise<{ output: z.infer<T>; toolText: string }> {
-  const args = ['-p', '--model', CLAUDE_MODEL, '--output-format', 'stream-json', '--verbose',
+async function runClaudeAttempt<T extends z.ZodType>(config: Config, { system, prompt, schema, web = false, timeoutMs = 90000, model = CLAUDE_MODEL }: ClaudeRequest<T>): Promise<{ output: z.infer<T>; toolText: string }> {
+  const args = ['-p', '--model', model, '--output-format', 'stream-json', '--verbose',
     '--system-prompt', system, '--json-schema', JSON.stringify(jsonSchema(schema)),
     '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--tools', ''];
   if (web) {

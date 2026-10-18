@@ -1,5 +1,5 @@
 import type { DeliverableKey, PhaseId, Project } from './types'
-import { hypothesisValidated } from './types'
+import { chosenSolution, hypothesisValidated } from './types'
 
 export const phases: { id: PhaseId; name: string; question: string; description: string; subtitle: string }[] = [
   { id: 'discover', name: 'Discover', question: '¿Qué problema vale la pena resolver?', description: 'Entender a quién le pasa, cómo lo resuelve hoy y qué evidencia tenemos.', subtitle: 'Discover & Frame · Validate Problem' },
@@ -33,9 +33,17 @@ export function getSteps(project: Project | null, phase: PhaseId) {
       return { id: hypothesis?.id ?? `hypothesis-${i}`, title: `Validar hipótesis 0${i + 1}`, done: Boolean(project && hypothesis && hypothesisValidated(project, hypothesis.id)), section: 'validate' }
     }),
   ]
-  return (Object.entries(artifacts) as [DeliverableKey, typeof artifacts[DeliverableKey]][])
-    .filter(([, artifact]) => artifact.phase === phase && !artifact.optional)
-    .map(([key, artifact]) => ({ id: key, title: artifact.title, done: doc?.nodes.find(n => n.id === `deliverable-${key}`)?.status === 'done', section: phase }))
+  const approved = (key: DeliverableKey) => doc?.nodes.find(n => n.id === `deliverable-${key}`)?.status === 'done'
+  if (phase === 'explore') return [
+    { id: 'matrix', title: 'Matriz de alternativas', done: Boolean(doc?.explore?.rows.length), section: phase },
+    { id: 'choice', title: 'Elegir la solución', done: Boolean(chosenSolution(project)), section: phase },
+    ...(['solution-concept', 'value-proposition', 'critical-assumptions'] as const).map(key => ({ id: key, title: artifacts[key].title, done: approved(key), section: phase })),
+  ]
+  const prototype = doc?.prototype
+  return [
+    { id: 'landing', title: 'Landing publicada', done: Boolean(prototype?.hasLanding && prototype.solutionId === doc?.explore?.chosenId), section: phase },
+    ...[0, 1, 2].map(i => ({ id: `lh-${i + 1}`, title: `Hipótesis 0${i + 1} de la landing`, done: Boolean(prototype?.hypotheses[i]?.decision), section: phase })),
+  ]
 }
 
 export function overallPercent(project: Project | null) {

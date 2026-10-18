@@ -80,12 +80,14 @@ settings="$(node --env-file-if-exists=.env --input-type=module -e '
   console.log(new URL(c.trailbaseUrl).port);
   console.log(process.env.ENABLE_TUNNEL ?? "1");
   console.log(process.env.PUBLIC_URL ?? "");
+  console.log(c.memoryUrl);
 ')"
 mapfile -t settings <<< "$settings"
 APP_PORT="${settings[0]}"
 TRAIL_PORT="${settings[1]}"
 TUNNEL_ENABLED="${settings[2]}"
 PUBLIC_APP_URL="${settings[3]:-}"
+MEMORY_URL="${settings[4]}"
 
 if [[ "$TUNNEL_ENABLED" != 0 && "$TUNNEL_ENABLED" != 1 ]]; then
   say "$RED" "✗ ENABLE_TUNNEL must be 0 or 1." >&2
@@ -121,15 +123,45 @@ TRAIL_PID=$!
 pids+=("$TRAIL_PID")
 wait_ready "http://127.0.0.1:$TRAIL_PORT/api/ping" "$TRAIL_PID" TrailBase .run/trailbase.log
 
+# The founder network memory is optional: if it stops, the app keeps running.
+# It starts before the seed, which empties it and projects the demo founders into it.
+MEMORY_PID=''
+if [[ "${ENABLE_MEMORY:-1}" != 0 ]]; then
+  bash memory/run.sh >.run/memory.log 2>&1 9>&- &
+  MEMORY_PID=$!
+  pids+=("$MEMORY_PID")
+fi
+
+# Every start resets the base to the demo seed (a backup goes to backend/data/backups).
+# SEED=0 ./start.sh keeps the current data.
+if [[ "${SEED:-1}" != 0 ]]; then
+  if [[ -n "$MEMORY_PID" ]]; then
+    say "$DIM" "  Esperando la memoria de la red para el seed…"
+    for _ in {1..180}; do
+      kill -0 "$MEMORY_PID" 2>/dev/null || break
+      curl --fail --silent --max-time 1 "$MEMORY_URL/health" >/dev/null && break
+      sleep 0.5
+    done
+  fi
+  say "$CYAN" "◆ Seed  ·  Reiniciando la base con los datos de demo…"
+  if ! pnpm --dir agents seed >.run/seed.log 2>&1 9>&-; then
+    say "$RED" "✗ Seed failed; see .run/seed.log." >&2
+    exit 1
+  fi
+  say "$DIM" "  $(tail -n 1 .run/seed.log)"
+fi
+
 node --env-file-if-exists=.env agents/dist/server.js >.run/agents.log 2>&1 9>&- &
 NODE_PID=$!
 pids+=("$NODE_PID")
 wait_ready "http://127.0.0.1:$APP_PORT/api/agents/health" "$NODE_PID" Node .run/agents.log
 # Verify forwarding as well as both process health checks.
 curl --fail --silent --max-time 5 "http://127.0.0.1:$APP_PORT/api/ping" >/dev/null
+core_pids=("$TRAIL_PID" "$NODE_PID")
 
 printf '\n%s◆ Assistant%s\n\n' "$BOLD$CYAN" "$RESET"
 say "$GREEN" "✓ App   http://localhost:$APP_PORT"
+[[ "${ENABLE_MEMORY:-1}" != 0 ]] && say "$DIM" "  Red de founders: Graphiti + FalkorDB · .run/memory.log"
 
 if [[ "$TUNNEL_ENABLED" == 1 ]]; then
   cloudflared tunnel --url "http://127.0.0.1:$APP_PORT" >.run/cloudflared.log 2>&1 9>&- &
@@ -146,7 +178,7 @@ fi
 
 printf '\n%sPress Ctrl+C to stop.%s\n\n' "$DIM" "$RESET"
 set +e
-wait -n "${pids[@]}"
+wait -n "${core_pids[@]}"
 status=$?
 set -e
 say "$RED" "✗ An app process exited (status $status); check .run/ logs." >&2

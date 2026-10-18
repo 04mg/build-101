@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Check, ChevronDown, Globe, LoaderCircle, Maximize, Minus, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Flag, Globe, LoaderCircle, Maximize, Minus, Plus, X } from 'lucide-react'
 import { kindLabels, relationLabels, statusLabels, type EditTarget, type GraphEdge, type KnowledgeNote, type Point } from './types'
 import { sourceContribution } from './sourceContribution'
 
@@ -24,7 +24,7 @@ interface Props {
 type Bounds = { x: number; y: number; width: number; height: number }
 /** Web sources are not cards: they are listed together next to the note they inform. */
 type SourceCluster = Bounds & { key: string; owner: string; sources: KnowledgeNote[] }
-const size = (note: KnowledgeNote) => ({ width: 220, height: note.discovery ? 280 : 180 })
+const size = (_note: KnowledgeNote) => ({ width: 220, height: 180 })
 const clamp = (zoom: number) => Math.max(0.15, Math.min(2, zoom))
 const CLUSTER_WIDTH = 250, ROW_HEIGHT = 34, VISIBLE_ROWS = 5
 
@@ -311,8 +311,8 @@ export function GraphCanvas({ notes: allNotes, edges, positions: saved, selected
           style={{ left: positions[note.id]?.x ?? 0, top: positions[note.id]?.y ?? 0 }}>
           {!edit && note.kind === 'hypothesis' && hypothesisOutcomes[note.id] && <span className={`hypothesis-result graph-hypothesis-result ${hypothesisOutcomes[note.id]}`} role="img" aria-label={hypothesisOutcomes[note.id] === 'validated' ? 'Hipótesis validada' : 'Hipótesis no validada'}>{hypothesisOutcomes[note.id] === 'validated' ? <Check size={40} strokeWidth={3} /> : <X size={40} strokeWidth={3} />}</span>}
           {edit ? <NoteSkeleton label={edit.op === 'delete' ? 'Quitando esta nota…' : 'Editando…'} /> : note.kind === 'problem' ? <><strong>{note.title}</strong><p>{note.body}</p></> : <>
-            <strong>{note.title}</strong>{note.discovery ? <div className="discovery-sections"><section><h4>Observación</h4><p>{note.discovery.observation}</p></section><section><h4>Insight</h4><p>{note.discovery.insight}</p></section><section><h4>Oportunidad (HMW)</h4><p>{note.discovery.opportunity}</p></section></div> : <p>{sourceContribution(note, notes, edges)}</p>}
-            <span className="note-foot">{hypothesisOutcomes[note.id] === 'validated' ? 'Validada' : hypothesisOutcomes[note.id] === 'rejected' ? 'No validada' : note.rationale ? 'Ajustado con research' : note.status === 'open' ? (note.origin === 'founder' ? 'Tu punto de partida' : 'Por contrastar') : statusLabels[note.status]}</span>
+            <strong>{note.title}</strong>{note.discovery ? <div className="discovery-sections">{selected === note.id && <><section><h4>Observación</h4><p>{note.discovery.observation}</p></section><section><h4>Insight</h4><p>{note.discovery.insight}</p></section></>}<section><h4>HMW</h4><p>{note.discovery.opportunity}</p></section></div> : <p>{sourceContribution(note, notes, edges)}</p>}
+            <NoteBadge note={note} outcome={hypothesisOutcomes[note.id]} />
           </>}
         </div>
         })}
@@ -338,6 +338,19 @@ export function GraphCanvas({ notes: allNotes, edges, positions: saved, selected
       </div>
     </div>
   )
+}
+
+// The note's state, readable at a glance: icon + label on a tinted pill.
+// A validated or rejected hypothesis already shows its result mark, so no badge.
+function NoteBadge({ note, outcome }: { note: KnowledgeNote; outcome?: 'validated' | 'rejected' }) {
+  if (outcome || (note.kind === 'hypothesis' && (note.status === 'supported' || note.status === 'contradicted'))) return null
+  const [tone, Icon, label] = note.rationale ? ['research', Globe, 'Ajustado con research'] as const
+    : note.status === 'open' ? (note.origin === 'founder' ? ['founder', Flag, 'Tu punto de partida'] as const : ['pending', CircleDashed, 'Por contrastar'] as const)
+    : note.status === 'supported' ? ['validated', CircleCheck, statusLabels.supported] as const
+    : note.status === 'contradicted' ? ['rejected', CircleX, statusLabels.contradicted] as const
+    : note.status === 'indirect' ? ['research', Globe, statusLabels.indirect] as const
+    : ['done', Check, statusLabels[note.status]] as const
+  return <span className={`note-foot note-badge ${tone}`}><Icon size={12} strokeWidth={2.4} aria-hidden="true" />{label}</span>
 }
 
 function NoteSkeleton({ label }: { label: string }) {

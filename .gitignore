@@ -21,3 +21,6 @@ backend/data/session.db*
 !.env.example
 .run/
 agents/dist/
+
+# Demo preload data (seed/data): local only, never committed
+seed/data/

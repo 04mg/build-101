@@ -9,7 +9,8 @@ import type { ProjectStore } from './store.js';
 // in memory, so disconnects and service restarts never lose the founder's turn.
 export class IntakeJobs {
   private running = new Map<string, Promise<void>>();
-  constructor(private config: Config) {}
+  // onSettled starts follow-up work (instruments) once the turn is saved.
+  constructor(private config: Config, private onSettled?: (key: string, store: ProjectStore, projectId: number) => void) {}
   get size() { return this.running.size; }
   has(key: string) { return this.running.has(key); }
 
@@ -17,7 +18,7 @@ export class IntakeJobs {
     if (this.running.has(key)) return;
     const job = this.run(store, projectId).catch(error => {
       console.error('Cruce intake persistence failure', JSON.stringify({ projectId, status: error instanceof HttpError ? error.status : 500 }));
-    }).finally(() => { this.running.delete(key); });
+    }).finally(() => { this.running.delete(key); this.onSettled?.(key, store, projectId); });
     this.running.set(key, job);
   }
 
@@ -36,11 +37,12 @@ export class IntakeJobs {
     if (operation.status !== 'running' || !operation.id) return;
     try {
       const generated = structuredClone(accepted);
-      const result = await advanceIntake(this.config, generated.document, async () => {
-        await this.update(store, projectId, operation.id!, latest => { latest.document.intake.message = 'Preparando las encuestas y entrevistas con IA…'; });
-      });
+      const result = await advanceIntake(this.config, generated.document);
+      // The idea itself was not about a business: the project is discarded, not kept as noise.
+      if (result.discard) { await store.remove(projectId); return; }
       if (!generated.document.question) generated.document.confirmed = true;
-      generated.document.intake = { ...operation, status: 'idle', message: '' };
+      // An off-topic answer leaves the cofounder's redirect in the chat.
+      generated.document.intake = { ...operation, status: 'idle', message: result.onTopic ? '' : generated.document.intake.message };
       await this.update(store, projectId, operation.id, latest => {
         // Research and layout can advance while the founder is answering.
         // Apply only the synthesis changed by this turn, retaining new sources.
@@ -56,7 +58,7 @@ export class IntakeJobs {
         latest.document.confirmed = generated.document.confirmed;
         latest.document.validation = generated.document.validation;
         latest.document.intake = generated.document.intake;
-        latest.name = result.name;
+        if (result.onTopic) latest.name = result.name;
       });
     } catch (error) {
       const message = error instanceof HttpError ? error.message : reportAIFailure(this.config, 'intake-job', error).message;

@@ -22,6 +22,10 @@ export default defineConfig({
         target: 'http://localhost:4000',
         changeOrigin: true,
       },
+      '/l/': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      },
     },
   },
   build: {

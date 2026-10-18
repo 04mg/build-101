@@ -71,6 +71,28 @@ export const validationPlanSchema = z.object({
   interviews: z.array(z.object({ id: z.string(), person: z.string().min(1).max(1000), transcript: z.string().min(1).max(30000), at: z.string(), epoch: z.number().int() })).default([]),
 });
 export type ValidationPlan = z.infer<typeof validationPlanSchema>;
+const jobSchema = { status: z.enum(['idle', 'running', 'ready', 'error']).default('idle'), error: z.string().nullable().default(null), at: z.string().nullable().default(null) };
+const scoreSchema = z.object({ criterionId: z.string().max(40), score: z.number().int().min(0).max(3).nullable(), note: z.string().max(240) });
+// Explore: a matrix that scores current alternatives and proposed solutions on
+// criteria taken from the Discover insights; the founder picks one solution.
+export const exploreSchema = z.object({ ...jobSchema, task: z.enum(['matrix', 'deliverables']).default('matrix'),
+  criteria: z.array(z.object({ id: z.string().max(40), label: z.string().max(80), insightId: z.string().max(100).nullable() })).max(6).default([]),
+  rows: z.array(z.object({ id: z.string().max(40), type: z.enum(['current', 'competitor', 'solution']), name: z.string().max(120), summary: z.string().max(400),
+    url: z.string().max(2000).nullable(), hmw: z.string().max(450).nullable(), scores: z.array(scoreSchema).max(6) })).max(10).default([]),
+  chosenId: z.string().nullable().default(null),
+});
+export type ExploreState = z.infer<typeof exploreSchema>;
+export const landingAssessmentSchema = z.object({ verdict: z.enum(['supports', 'contradicts', 'insufficient']), reason: z.string().max(1200), statsKey: z.string(), at: z.string() });
+// Prototype: one landing for the chosen solution, iterated by chat, with three
+// hypotheses its traffic and leads can support or contradict.
+export const prototypeSchema = z.object({ ...jobSchema, task: z.enum(['landing', 'iterate']).default('landing'),
+  solutionId: z.string().nullable().default(null), token: z.string().nullable().default(null),
+  html: z.string().max(200000).default(''), version: z.number().int().nonnegative().default(0), pending: z.string().max(1500).nullable().default(null),
+  chat: z.array(z.object({ role: z.enum(['founder', 'cofounder']), text: z.string().max(1500), at: z.string() })).max(60).default([]),
+  hypotheses: z.array(z.object({ id: z.string().max(40), statement: z.string().max(400), signal: z.string().max(300), criterion: z.string().max(300),
+    assessment: landingAssessmentSchema.nullable().default(null), decision: z.enum(['validated', 'rejected']).nullable().default(null), decidedAt: z.string().nullable().default(null) })).max(3).default([]),
+});
+export type PrototypeState = z.infer<typeof prototypeSchema>;
 export const documentSchema = z.object({
   version: z.literal(1), revision: z.number().int().nonnegative(),
   activePhase: phaseSchema.default('discover'),
@@ -87,7 +109,11 @@ export const documentSchema = z.object({
   assistant: z.array(assistantTurnSchema).default([]),
   validation: z.array(validationPlanSchema).default([]),
   intake: z.object({ status: z.enum(['idle', 'running', 'error']), id: z.string().nullable(), questionId: z.string().nullable(),
-    message: z.string(), startedAt: z.string().nullable() }).default({ status: 'idle', id: null, questionId: null, message: '', startedAt: null }),
+    message: z.string(), startedAt: z.string().nullable(),
+    // Who runs the turn: the Claude job on the server, or GPT-Realtime from the founder's browser.
+    engine: z.enum(['claude', 'realtime']).optional() }).default({ status: 'idle', id: null, questionId: null, message: '', startedAt: null }),
+  explore: exploreSchema.default(() => exploreSchema.parse({})),
+  prototype: prototypeSchema.default(() => prototypeSchema.parse({})),
 });
 export type ProjectDocument = z.infer<typeof documentSchema>;
 export type Project = { id: number; name: string; document: ProjectDocument; updatedAt: string };
@@ -100,7 +126,7 @@ export const initialQuestion: Question = {
 export function emptyDocument(): ProjectDocument {
   return { version: 1, revision: 0, activePhase: 'discover', answers: [], question: initialQuestion, nodes: [], edges: [], positions: {}, confirmed: false,
     research: { status: 'idle', message: '' }, decision: null, pivots: [], parent: null, assistant: [], validation: [],
-    intake: { status: 'idle', id: null, questionId: null, message: '', startedAt: null } };
+    intake: { status: 'idle', id: null, questionId: null, message: '', startedAt: null }, explore: exploreSchema.parse({}), prototype: prototypeSchema.parse({}) };
 }
 
 export function progress(doc: ProjectDocument) {
@@ -115,7 +141,7 @@ export function hypothesisValidated(doc: ProjectDocument, id: string) {
   const plan = doc.validation.find(p => p.hypothesisId === id), note = doc.nodes.find(n => n.id === id);
   if (!plan || !plan.validatedAt || plan.hypothesisBody !== note?.body) return false;
   const counts = validationCounts(plan);
-  return counts.surveys > 0 && counts.interviews > 0 && note.status === 'supported' && currentAssessment(doc, plan)?.verdict === 'supports';
+  return (counts.surveys > 0 || counts.interviews > 0) && note.status === 'supported' && currentAssessment(doc, plan)?.verdict === 'supports';
 }
 export function validationEvidenceKey(doc: ProjectDocument, plan: ValidationPlan) {
   const connected = new Set(doc.edges.filter(e => e.source === plan.hypothesisId || e.target === plan.hypothesisId).flatMap(e => [e.source, e.target]));
@@ -128,7 +154,8 @@ export function currentAssessment(doc: ProjectDocument, plan: ValidationPlan) {
 }
 export function canExplore(doc: ProjectDocument) {
   const hypotheses = doc.nodes.filter(n => n.kind === 'hypothesis');
-  return doc.confirmed && hypotheses.length === 3 && hypotheses.every(n => hypothesisValidated(doc, n.id));
+  // One validated hypothesis is enough to move on (lighter gate for demos).
+  return doc.confirmed && hypotheses.some(n => hypothesisValidated(doc, n.id));
 }
 
 export function putNote(doc: ProjectDocument, input: Pick<Note, 'id' | 'kind' | 'title' | 'body'> & Partial<Note>, position?: { x: number; y: number }) {
@@ -154,16 +181,72 @@ export function link(doc: ProjectDocument, source: string, target: string, relat
   if (!doc.edges.some(e => e.id === id)) doc.edges.push({ id, source, target, relation });
 }
 
+// The experiment sits to the right of the three hypotheses (x −340, −30, 280).
+export const EXPERIMENT_SPOT = { x: 620, y: 530 };
+
+// Cards are 220×180 on the canvas; slots keep a 30px margin around each one.
+const clear = (taken: { x: number; y: number }[], spot: { x: number; y: number }) => taken.every(p => Math.abs(p.x - spot.x) > 250 || Math.abs(p.y - spot.y) > 210);
+function obstacles(doc: ProjectDocument, positions = doc.positions) {
+  // Sources render as lists beside their note, so their stored positions are not obstacles.
+  const sources = new Set(doc.nodes.filter(n => n.kind === 'source').map(n => n.id));
+  return Object.entries(positions).filter(([id]) => !sources.has(id) && !id.startsWith('sources:')).map(([, p]) => p);
+}
+
+// First free slot on rings around `near`, skipping notes and reserved slots.
+export function freeSpot(doc: ProjectDocument, near: { x: number; y: number }, reserved: { x: number; y: number }[] = [], positions = doc.positions) {
+  const taken = [...obstacles(doc, positions), ...reserved];
+  if (clear(taken, near)) return near;
+  for (let ring = 1; ring < 8; ring++) {
+    for (let step = 0; step < ring * 8; step++) {
+      const angle = (step / (ring * 8)) * Math.PI * 2;
+      const spot = { x: Math.round(near.x + Math.cos(angle) * ring * 290), y: Math.round(near.y + Math.sin(angle) * ring * 250) };
+      if (clear(taken, spot)) return spot;
+    }
+  }
+  return { x: near.x + 300, y: near.y + 260 };
+}
+
+// First free slot in the column under a note (insights stack under their hypothesis).
+export function slotBelow(doc: ProjectDocument, anchorId: string) {
+  const anchor = doc.positions[anchorId] ?? { x: 0, y: 530 }, taken = obstacles(doc);
+  for (let y = anchor.y + 240; y < anchor.y + 240 + 20 * 220; y += 220) if (clear(taken, { x: anchor.x, y })) return { x: anchor.x, y };
+  return freeSpot(doc, { x: anchor.x, y: anchor.y + 240 });
+}
+
+// Insights (and their HMW) come only from survey or interview responses. Web
+// research used to publish its own; those stay in storage but never surface.
+export const webInsight = (n: Note) => n.kind === 'insight' && n.origin === 'agent' && n.status === 'indirect' && !n.inheritedFrom;
+
 export function publicProject(project: Project) {
-  const phaseProgress = { discover: progress(project.document), explore: deliverableProgress(project.document, ['solution-concept', 'value-proposition', 'critical-assumptions']), prototype: deliverableProgress(project.document, ['prototype', 'experiment-results', 'learnings']) };
-  const nodes = project.document.nodes.filter(n => !n.archived && (n.kind !== 'insight' || n.origin === 'founder' || n.discovery)), visible = new Set(nodes.map(n => n.id));
-  return { ...project, progress: phaseProgress.discover, phaseProgress, overallProgress: Math.round((phaseProgress.discover + phaseProgress.explore + phaseProgress.prototype) / 3), document: { ...project.document,
+  const phaseProgress = { discover: progress(project.document), explore: exploreProgress(project.document), prototype: prototypeProgress(project.document) };
+  const nodes = project.document.nodes.filter(n => !n.archived && (n.kind !== 'insight' || n.origin === 'founder' || (n.discovery && !webInsight(n)))), visible = new Set(nodes.map(n => n.id));
+  // Notes saved without a position (older experiments) would all stack on the problem.
+  const positions = { ...project.document.positions };
+  for (const note of nodes.filter(n => n.kind !== 'source' && !positions[n.id])) positions[note.id] = freeSpot(project.document, note.kind === 'experiment' ? EXPERIMENT_SPOT : { x: 0, y: 0 }, [], positions);
+  // The landing is served at /l/:token; the workspace previews it there, not in every poll.
+  const prototype = { ...project.document.prototype, html: '', hasLanding: Boolean(project.document.prototype.html) };
+  return { ...project, progress: phaseProgress.discover, phaseProgress, overallProgress: Math.round((phaseProgress.discover + phaseProgress.explore + phaseProgress.prototype) / 3), document: { ...project.document, positions, prototype,
     nodes: nodes.map(({ embedding: _embedding, embeddingModel: _model, ...note }) => note), edges: project.document.edges.filter(e => visible.has(e.source) && visible.has(e.target)) } };
 }
 
-function deliverableProgress(doc: ProjectDocument, keys: string[]) {
-  return Math.round(keys.reduce((total, key) => {
+// Draft deliverables count half; approved ones count whole.
+function deliverableUnits(doc: ProjectDocument, keys: string[]) {
+  return keys.reduce((total, key) => {
     const note = doc.nodes.find(n => n.id === `deliverable-${key}`);
-    return total + (!note?.body.trim() || note.status === 'indirect' ? 0 : note.status === 'done' ? 2 : 1);
-  }, 0) / (keys.length * 2) * 100);
+    return total + (!note?.body.trim() || note.status === 'indirect' ? 0 : note.status === 'done' ? 1 : 0.5);
+  }, 0);
+}
+export const exploreDeliverables = ['solution-concept', 'value-proposition', 'critical-assumptions'] as const;
+// Explore: matrix, chosen solution and its three deliverables.
+export function exploreProgress(doc: ProjectDocument) {
+  const units = (doc.explore.rows.length ? 1 : 0) + (chosenSolution(doc) ? 1 : 0) + deliverableUnits(doc, [...exploreDeliverables]);
+  return Math.round(units / 5 * 100);
+}
+// Prototype: the landing is live, then each of its three hypotheses gets a verdict.
+export function prototypeProgress(doc: ProjectDocument) {
+  const p = doc.prototype, live = Boolean(p.html && p.solutionId === doc.explore.chosenId);
+  return live ? 25 + p.hypotheses.slice(0, 3).filter(h => h.decision).length * 25 : 0;
+}
+export function chosenSolution(doc: ProjectDocument) {
+  return doc.explore.rows.find(r => r.type === 'solution' && r.id === doc.explore.chosenId);
 }

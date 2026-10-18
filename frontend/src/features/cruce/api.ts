@@ -1,5 +1,5 @@
 import { agentHeaders } from '@/features/agent-demo/api/session'
-import type { Capabilities, MemoryHit, Project, ProjectSummary } from './types'
+import type { Capabilities, LandingStats, MemoryHit, Project, ProjectSummary } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -20,7 +20,8 @@ export async function request<T>(path: string, body?: unknown, signal?: AbortSig
 
 export const listProjects = () => request<{ projects: ProjectSummary[]; capabilities: Capabilities }>('projects')
 export const getProject = (id: number, signal?: AbortSignal) => request<Project>(`projects/${id}`, undefined, signal)
-export const createProject = (idea: string) => request<Project>('projects', { idea })
+export const createProject = (idea: string, engine: 'claude' | 'realtime' = 'claude') => request<Project>('projects', { idea, engine })
 export const updateProject = (project: Project, action: Record<string, unknown>) => request<Project>(`projects/${project.id}`, { ...action, revision: project.document.revision })
 export const researchProject = (id: number) => request<Project>(`projects/${id}/research`, {})
 export const findMemory = (query: string) => request<{ mode: 'hybrid' | 'text'; hits: MemoryHit[] }>(`memory?q=${encodeURIComponent(query)}`)
+export const getLandingStats = (id: number, signal?: AbortSignal) => request<LandingStats>(`projects/${id}/landing`, undefined, signal)

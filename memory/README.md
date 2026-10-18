@@ -1,4 +1,11 @@
-# Cruce memory spike
+# Cruce memory
+
+`service.py` es la memoria de la red de founders que usa la app: un servicio HTTP privado (`127.0.0.1:MEMORY_PORT`, 4010 por defecto) sobre Graphiti + FalkorDB. El agente (`agents/src/cruce/network.ts`) le envía los problemas, pain points e hipótesis de cada proyecto, busca cruces y registra contactos y conexiones. Cada nota lleva su resultado y cuánta evidencia la respalda (respuestas y entrevistas): la búsqueda pondera más un aprendizaje resuelto y con más evidencia. Además de los cruces por proyecto, `find_founders` del cofounder busca con la pregunta del fundador en `/match`: coseno contra los embeddings de las notas, cacheados en memoria, por el peso de cada nota y con un umbral de similitud; responde en milisegundos, sin LLM, con un solo founder. `run.sh` levanta FalkorDB, crea el venv si falta y arranca el servicio; `start.sh` y `watch.sh` lo llaman solos.
+
+Sin `AI_API_KEY` usa embeddings locales deterministas (grafo `cruce_network_local`); con ella, embeddings de OpenRouter (grafo `cruce_network_openrouter`).
+
+## Spike original
+
 
 CLI aislado para probar **Graphiti + FalkorDB + embeddings de OpenRouter** con perfiles y experiencias completamente ficticios. No modifica `agents/`, `frontend/` ni TrailBase.
 

@@ -70,6 +70,8 @@ export class ProjectStore {
     return this.get(project.id);
   }
 
+  async remove(id: number): Promise<void> { await this.request(`cruce_projects/${id}`, 'DELETE'); }
+
   async knowledge(): Promise<{ project_id: number; node_key: string; title: string; body: string; kind: string; data: string | Note }[]> {
     return this.listRows('cruce_knowledge');
   }

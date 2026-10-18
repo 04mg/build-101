@@ -5,6 +5,7 @@ import { HttpError, json, readJson } from './http.js';
 import { createCruceRoutes } from './cruce/routes.js';
 import { register } from './register.js';
 import { stopClaudeRuns } from './cruce/claude.js';
+import { handlePublicLanding } from './cruce/landing.js';
 
 export function createApp(config: Config) {
   const handleCruce = createCruceRoutes(config);
@@ -44,6 +45,8 @@ export function createApp(config: Config) {
       json(response, 200, { status: 'ok', configured: config.ai });
       return;
     }
+    // Public Prototype landings and their visit/lead events, without login.
+    if (await handlePublicLanding(request, response, pathname)) return;
     if (!pathname.startsWith('/api/agents/') && pathname !== '/api/agents') {
       // The former model endpoint is deliberately retired, including stale WASM builds.
       if (pathname === '/api/chat') {
